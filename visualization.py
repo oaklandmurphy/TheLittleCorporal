@@ -147,23 +147,49 @@ class Visualization:
         return (col, row)
 
     def get_hover_info(self, mouse_pos):
+        """Return a list of lines describing the hovered hex/unit, including feature names."""
         hex_coords = self.get_hex_at_pixel(*mouse_pos)
-        if hex_coords:
-            col, row = hex_coords
-            hex = self.game_map.get_hex(col, row)
-            if hex:
-                if hex.unit:
-                    return hex.unit.status() if hasattr(hex.unit, "status") else str(hex.unit)
-                else:
-                    t = hex.terrain
-                    return f"{t.name} (Move: {t.move_cost}, Combat: {getattr(t, 'combat_modifier', getattr(t, 'combat_mod', 1.0))})"
-        return None
+        if not hex_coords:
+            return None
+        col, row = hex_coords
+        hex = self.game_map.get_hex(col, row)
+        if not hex:
+            return None
+
+        lines = []
+        t = hex.terrain
+        terrain_line = f"{t.name} (Move: {t.move_cost}, Combat: {getattr(t, 'combat_modifier', getattr(t, 'combat_mod', 1.0))})"
+
+        if hex.unit:
+            unit_line = hex.unit.status() if hasattr(hex.unit, "status") else str(hex.unit)
+            lines.append(unit_line)
+            lines.append(f"Terrain: {terrain_line}")
+        else:
+            lines.append(terrain_line)
+
+        if getattr(hex, "features", None):
+            feat_str = "; ".join(hex.features)
+            if feat_str:
+                lines.append(f"Features: {feat_str}")
+
+        return lines if lines else None
 
     def render_hover_info(self, hover_info):
-        if hover_info:
-            text_surface = self.font.render(hover_info, True, (20, 20, 20), (255, 255, 220))
+        if not hover_info:
+            return
+        # Normalize to list of lines
+        if isinstance(hover_info, str):
+            lines = hover_info.splitlines()
+        else:
+            lines = list(hover_info)
+
+        x = 20
+        y = 20
+        line_gap = 4
+        for i, line in enumerate(lines):
+            text_surface = self.font.render(line, True, (20, 20, 20), (255, 255, 220))
             text_data = pygame.image.tostring(text_surface, "RGBA", True)
-            glWindowPos2d(20, 20)
+            glWindowPos2d(x, y + i * (self.font.get_height() + line_gap))
             glDrawPixels(text_surface.get_width(), text_surface.get_height(), GL_RGBA, GL_UNSIGNED_BYTE, text_data)
 
 # ------------------------------------------------------------

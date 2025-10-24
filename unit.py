@@ -5,9 +5,11 @@ import random
 
 class Unit(ABC):
 	"""Represents a single combat unit on the battlefield."""
-	def __init__(self, name: str, faction: str, mobility: int, size: int, quality: int, morale: int):
+	def __init__(self, name: str, faction: str, division: str, corps: str, mobility: int, size: int, quality: int, morale: int):
 		self.name = name
 		self.faction = faction
+		self.division = division
+		self.corps = corps
 		self.mobility = mobility  # integer: max distance moved in a turn
 		self.remaining_mobility = mobility
 		self.size = size          # 1–12: number of men abstracted
@@ -64,24 +66,10 @@ class Unit(ABC):
 					return label
 			return "unknown"
 
-		return (f"{self.name} ({self.__class__.__name__}) at ({self.x}, {self.y}) — "
+		return (f"{self.name}, {self.division}, {self.corps}. ({self.__class__.__name__}) at ({self.x}, {self.y}) — "
 				f"A {label_for(self.size, size_labels)}, {label_for(self.quality, quality_labels)} "
 				f"formation that is {label_for(self.morale, morale_labels)}.")
 
 class Infantry(Unit):
 	def set_mobility(self):
-		self.mobility = 2
-
-class Cavalry(Unit):
-	def set_mobility(self):
 		self.mobility = 4
-
-class Artillery(Unit):
-	def set_mobility(self):
-		self.mobility = 1
-
-	def bombard(self, enemy: Unit, range_penalty: int = 1):
-		damage = int((self.quality * self.size * random.uniform(0.6, 1.0)) / (10 * range_penalty))
-		enemy.size = max(0, enemy.size - damage)
-		enemy.morale = max(0, enemy.morale - 1)
-		print(f"{self.name} bombards {enemy.name}! Inflicts {damage} casualties.")
