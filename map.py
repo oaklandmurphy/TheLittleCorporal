@@ -188,6 +188,196 @@ class Map:
         
         return {"results": results}
 
+    # --- Staff Officer movement helpers and actions ---
+    def _hex_distance(self, x1: int, y1: int, x2: int, y2: int) -> int:
+        """Calculate hex distance using cube coordinates for odd-r offset layout."""
+        def offset_to_cube(x: int, y: int) -> Tuple[int, int, int]:
+            q = x - (y - (y & 1)) // 2
+            r = y
+            return q, r, -q - r
+
+        q1, r1, s1 = offset_to_cube(x1, y1)
+        q2, r2, s2 = offset_to_cube(x2, y2)
+        return (abs(q1 - q2) + abs(r1 - r2) + abs(s1 - s2)) // 2
+
+    def _find_unit_by_name(self, name: str) -> Optional[Unit]:
+        for row in self.grid:
+            for hex in row:
+                if hex.unit and hex.unit.name == name:
+                    return hex.unit
+        return None
+
+    def _nearest_enemy_pos(self, unit: Unit) -> Optional[Tuple[int, int]]:
+        best = None
+        best_d = float("inf")
+        for y in range(self.height):
+            for x in range(self.width):
+                other = self.grid[y][x].unit
+                if other and other.faction != unit.faction:
+                    d = self._hex_distance(unit.x, unit.y, x, y)
+                    if d < best_d:
+                        best_d, best = d, (x, y)
+        return best
+
+    def _direction_offsets(self, y: int) -> List[Tuple[int, int]]:
+        """Return the 6 neighbor direction offsets in order, matching get_neighbors order."""
+        offsets_even = [(+1, 0), (-1, 0), (0, +1), (0, -1), (-1, +1), (-1, -1)]
+        offsets_odd = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (+1, -1)]
+        return offsets_odd if y % 2 else offsets_even
+
+    def _desired_along_direction(self, x: int, y: int, dir_index: int, steps: int = 1) -> Tuple[int, int]:
+        dx, dy = self._direction_offsets(y)[dir_index % 6]
+        tx, ty = x, y
+        for _ in range(max(1, steps)):
+            tx += dx
+            ty += dy
+        return tx, ty
+
+    def _best_reachable_toward(self, unit: Unit, target: Tuple[int, int], max_cost: Optional[int] = None) -> Optional[Tuple[int, int]]:
+        reachable = self.find_reachable_hexes(unit)
+        if max_cost is not None:
+            reachable = {pos: cost for pos, cost in reachable.items() if cost <= max_cost}
+        if not reachable:
+            return None
+        best_hex = None
+        best_dist = float("inf")
+        for (rx, ry), _cost in reachable.items():
+            if (rx, ry) == (unit.x, unit.y):
+                continue
+            dist = self._hex_distance(rx, ry, target[0], target[1])
+            if dist < best_dist:
+                best_dist = dist
+                best_hex = (rx, ry)
+        return best_hex
+
+    def advance(self, unit_name: str, destination: Tuple[int, int]) -> dict:
+        """Advance the named unit toward a destination hex using pathfinding."""
+        unit = self._find_unit_by_name(unit_name)
+        if not unit:
+            return {"ok": False, "error": "Unit not found"}
+        target = (int(destination[0]), int(destination[1]))
+        # Move to destination if in range, otherwise get closest reachable toward it
+        reachable = self.find_reachable_hexes(unit)
+        if target in reachable:
+            moved = self.move_unit(unit, *target)
+            return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+        best = self._best_reachable_toward(unit, target)
+        if not best:
+            return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No reachable hex"}
+        moved = self.move_unit(unit, best[0], best[1])
+        return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+
+    def retreat(self, unit_name: str, destination: Tuple[int, int]) -> dict:
+        """Fall back toward a designated destination, preferring to increase distance from the nearest enemy."""
+        unit = self._find_unit_by_name(unit_name)
+        if not unit:
+            return {"ok": False, "error": "Unit not found"}
+        dest = (int(destination[0]), int(destination[1]))
+        enemy_pos = self._nearest_enemy_pos(unit)
+        reachable = self.find_reachable_hexes(unit)
+        if not reachable:
+            return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No reachable hex"}
+        # Score: maximize distance to enemy (if known), then minimize distance to destination
+        best_hex = None
+        best_score = None
+        for (rx, ry) in reachable.keys():
+            if (rx, ry) == (unit.x, unit.y):
+                continue
+            dist_enemy = self._hex_distance(rx, ry, enemy_pos[0], enemy_pos[1]) if enemy_pos else 0
+            dist_dest = self._hex_distance(rx, ry, dest[0], dest[1])
+            score = (dist_enemy, -dist_dest)
+            if best_score is None or score > best_score:
+                best_score = score
+                best_hex = (rx, ry)
+        if not best_hex:
+            return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No better hex"}
+        moved = self.move_unit(unit, best_hex[0], best_hex[1])
+        return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+
+    def flank_left(self, unit_name: str, destination: Tuple[int, int]) -> dict:
+        """Flank left toward a destination by biasing the path to the left of the main approach."""
+        unit = self._find_unit_by_name(unit_name)
+        if not unit:
+            return {"ok": False, "error": "Unit not found"}
+        dest = (int(destination[0]), int(destination[1]))
+        # determine forward direction as neighbor reducing distance to destination most
+        dirs = self._direction_offsets(unit.y)
+        best_dir = 0
+        best_reduction = -1
+        curd = self._hex_distance(unit.x, unit.y, dest[0], dest[1])
+        for i, (dx, dy) in enumerate(dirs):
+            nx, ny = unit.x + dx, unit.y + dy
+            if not (0 <= nx < self.width and 0 <= ny < self.height):
+                continue
+            nd = self._hex_distance(nx, ny, dest[0], dest[1])
+            red = curd - nd
+            if nd < curd and red > best_reduction and self.grid[ny][nx].unit is None:
+                best_reduction = red
+                best_dir = i
+        left_dir = (best_dir - 1) % 6
+        desired = self._desired_along_direction(unit.x, unit.y, left_dir, 1)
+        best = self._best_reachable_toward(unit, desired)
+        if not best:
+            # fallback toward destination normally
+            best = self._best_reachable_toward(unit, dest)
+            if not best:
+                return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No flank path"}
+        moved = self.move_unit(unit, best[0], best[1])
+        return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+
+    def flank_right(self, unit_name: str, destination: Tuple[int, int]) -> dict:
+        """Flank right toward a destination by biasing the path to the right of the main approach."""
+        unit = self._find_unit_by_name(unit_name)
+        if not unit:
+            return {"ok": False, "error": "Unit not found"}
+        dest = (int(destination[0]), int(destination[1]))
+        dirs = self._direction_offsets(unit.y)
+        best_dir = 0
+        best_reduction = -1
+        curd = self._hex_distance(unit.x, unit.y, dest[0], dest[1])
+        for i, (dx, dy) in enumerate(dirs):
+            nx, ny = unit.x + dx, unit.y + dy
+            if not (0 <= nx < self.width and 0 <= ny < self.height):
+                continue
+            nd = self._hex_distance(nx, ny, dest[0], dest[1])
+            red = curd - nd
+            if nd < curd and red > best_reduction and self.grid[ny][nx].unit is None:
+                best_reduction = red
+                best_dir = i
+        right_dir = (best_dir + 1) % 6
+        desired = self._desired_along_direction(unit.x, unit.y, right_dir, 1)
+        best = self._best_reachable_toward(unit, desired)
+        if not best:
+            best = self._best_reachable_toward(unit, dest)
+            if not best:
+                return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No flank path"}
+        moved = self.move_unit(unit, best[0], best[1])
+        return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+
+    def hold(self, unit_name: str, destination: Tuple[int, int]) -> dict:
+        """Order the unit to hold position (no movement). Destination is accepted but not used."""
+        unit = self._find_unit_by_name(unit_name)
+        if not unit:
+            return {"ok": False, "error": "Unit not found"}
+        return {"ok": True, "unit": unit.name, "position": [unit.x, unit.y]}
+
+    def march(self, unit_name: str, destination: Tuple[int, int]) -> dict:
+        """Order the unit to march toward a destination (x, y)."""
+        unit = self._find_unit_by_name(unit_name)
+        if not unit:
+            return {"ok": False, "error": "Unit not found"}
+        dx, dy = int(destination[0]), int(destination[1])
+        reachable = self.find_reachable_hexes(unit)
+        if (dx, dy) in reachable:
+            moved = self.move_unit(unit, dx, dy)
+            return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+        # Otherwise move as close as possible
+        best = self._best_reachable_toward(unit, (dx, dy))
+        if not best:
+            return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No path"}
+        moved = self.move_unit(unit, best[0], best[1])
+        return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+
     # --- Dijkstra Pathfinding ---
     def find_reachable_hexes(self, unit: Unit):
         """Find all reachable hexes within unit.mobility using terrain move_cost."""

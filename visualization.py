@@ -1,11 +1,34 @@
 
 import math
 import pygame
+from unit import Unit
 from pygame.locals import *
 from OpenGL.GL import (
     glBegin, glEnd, glColor3f, glVertex2f, glClearColor, glClear, glDrawPixels, glWindowPos2d,
-    GL_POLYGON, GL_LINE_LOOP, GL_QUADS, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, GL_RGBA, GL_UNSIGNED_BYTE
+    GL_POLYGON, GL_LINE_LOOP, GL_QUADS, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINES, glLineWidth
 )
+def draw_unit_square(unit: Unit):
+    """Draw a fallback rectangle for non-infantry units."""
+    if unit.x is None or unit.y is None:
+        return
+    cx, cy = hex_to_pixel(unit.x, unit.y)
+    width = HEX_SIZE * 0.5
+    height = HEX_SIZE * 0.5
+    color = FACTION_COLORS.get(unit.faction, (1.0, 1.0, 1.0))
+    glColor3f(*color)
+    glBegin(GL_QUADS)
+    glVertex2f(cx - width/2, cy - height/2)
+    glVertex2f(cx + width/2, cy - height/2)
+    glVertex2f(cx + width/2, cy + height/2)
+    glVertex2f(cx - width/2, cy + height/2)
+    glEnd()
+    glColor3f(0.0, 0.0, 0.0)
+    glBegin(GL_LINE_LOOP)
+    glVertex2f(cx - width/2, cy - height/2)
+    glVertex2f(cx + width/2, cy - height/2)
+    glVertex2f(cx + width/2, cy + height/2)
+    glVertex2f(cx - width/2, cy + height/2)
+    glEnd()
 from OpenGL.GLU import gluOrtho2D
 import sys
 
@@ -35,9 +58,11 @@ DEFAULT_TERRAIN_COLOR = (0.6, 0.6, 0.6)
 
 # Faction colors
 FACTION_COLORS = {
-    "Blue": (0.0, 0.2, 0.9),
-    "Red":  (0.9, 0.15, 0.15),
-    "Green": (0.0, 0.7, 0.2),
+    "French": (0.2, 0.3, 0.7),
+    "Austrian":  (0.95, 0.77, 0.22),
+    "Russian": (0.2, 0.7, 0.1),
+    "Prussian": (0.1, 0.1, 0.1),
+    "British": (0.9, 0.3, 0.3)
 }
 
 def hex_to_pixel(col: int, row: int):
@@ -80,28 +105,41 @@ def draw_hex(cx: float, cy: float, color):
         glVertex2f(x, y)
     glEnd()
 
-def draw_unit_square(unit: Unit):
-    """Draw a small square centered in the hex of the unit."""
+def draw_infantry_symbol(unit: Unit):
+    """Draw a NATO infantry symbol: horizontal rectangle with crossed diagonal lines."""
     if unit.x is None or unit.y is None:
         return
     cx, cy = hex_to_pixel(unit.x, unit.y)
-    half = HEX_SIZE * 0.35  # square half-size
+    width = HEX_SIZE * 1.0
+    height = HEX_SIZE * 0.7
     color = FACTION_COLORS.get(unit.faction, (1.0, 1.0, 1.0))
+    # Draw filled rectangle
     glColor3f(*color)
     glBegin(GL_QUADS)
-    glVertex2f(cx - half, cy - half)
-    glVertex2f(cx + half, cy - half)
-    glVertex2f(cx + half, cy + half)
-    glVertex2f(cx - half, cy + half)
+    glVertex2f(cx - width/2, cy - height/2)
+    glVertex2f(cx + width/2, cy - height/2)
+    glVertex2f(cx + width/2, cy + height/2)
+    glVertex2f(cx - width/2, cy + height/2)
     glEnd()
-    # small black border
+    # Draw border
     glColor3f(0.0, 0.0, 0.0)
     glBegin(GL_LINE_LOOP)
-    glVertex2f(cx - half, cy - half)
-    glVertex2f(cx + half, cy - half)
-    glVertex2f(cx + half, cy + half)
-    glVertex2f(cx - half, cy + half)
+    glVertex2f(cx - width/2, cy - height/2)
+    glVertex2f(cx + width/2, cy - height/2)
+    glVertex2f(cx + width/2, cy + height/2)
+    glVertex2f(cx - width/2, cy + height/2)
     glEnd()
+    # Draw crossed diagonal lines (draw after rectangle and border)
+    margin = 1  # pixels inside the rectangle
+    glColor3f(0.0, 0.0, 0.0)
+    glLineWidth(3)
+    glBegin(GL_LINES)
+    glVertex2f(cx - width/2 + margin, cy - height/2 + margin)
+    glVertex2f(cx + width/2 - margin, cy + height/2 - margin)
+    glVertex2f(cx + width/2 - margin, cy - height/2 + margin)
+    glVertex2f(cx - width/2 + margin, cy + height/2 - margin)
+    glEnd()
+    glLineWidth(1)  # Reset to default
 
 
 class Visualization:
@@ -123,11 +161,16 @@ class Visualization:
                 cx, cy = hex_to_pixel(col, row)
                 draw_hex(cx, cy, color)
         # Draw units on top
+        from unit import Infantry
         for row in range(self.game_map.height):
             for col in range(self.game_map.width):
                 hex = self.game_map.get_hex(col, row)
                 if hex and hex.unit:
-                    draw_unit_square(hex.unit)
+                    # If unit is infantry, draw NATO symbol
+                    if isinstance(hex.unit, Infantry):
+                        draw_infantry_symbol(hex.unit)
+                    else:
+                        draw_unit_square(hex.unit)  # fallback for other unit types
         # Draw overlay info
         if hover_info:
             self.render_hover_info(hover_info)
@@ -147,7 +190,7 @@ class Visualization:
         return (col, row)
 
     def get_hover_info(self, mouse_pos):
-        """Return a list of lines describing the hovered hex/unit, including feature names."""
+        """Return a list of lines describing the hovered hex/unit, including feature names and coordinates."""
         hex_coords = self.get_hex_at_pixel(*mouse_pos)
         if not hex_coords:
             return None
@@ -157,9 +200,12 @@ class Visualization:
             return None
 
         lines = []
+        # Show coordinates first
+        lines.append(f"Hex: ({col}, {row})")
+
         t = hex.terrain
         terrain_line = f"{t.name} (Move: {t.move_cost}, Combat: {getattr(t, 'combat_modifier', getattr(t, 'combat_mod', 1.0))})"
-
+        
         if hex.unit:
             unit_line = hex.unit.status() if hasattr(hex.unit, "status") else str(hex.unit)
             lines.append(unit_line)
@@ -191,65 +237,3 @@ class Visualization:
             text_data = pygame.image.tostring(text_surface, "RGBA", True)
             glWindowPos2d(x, y + i * (self.font.get_height() + line_gap))
             glDrawPixels(text_surface.get_width(), text_surface.get_height(), GL_RGBA, GL_UNSIGNED_BYTE, text_data)
-
-# ------------------------------------------------------------
-# Demo / main loop
-# ------------------------------------------------------------
-
-def create_demo_map() -> Map:
-    """Build a small demo map with varied terrain and some units."""
-    w, h = 12, 9
-    game_map = Map(w, h)
-
-    # scatter some terrain
-    game_map.set_terrain(4, 3, HILL)
-    game_map.set_terrain(5, 3, HILL)
-    game_map.set_terrain(6, 3, HILL)
-    game_map.set_terrain(3, 4, FOREST)
-    game_map.set_terrain(7, 2, FOREST)
-    game_map.set_terrain(8, 5, RIVER)
-    game_map.set_terrain(2, 6, RIVER)
-    # place units
-    u1 = Unit("1st Line", "Blue", mobility=4, size=8, quality=3, morale=7)
-    u2 = Unit("Horse", "Red", mobility=6, size=5, quality=4, morale=8)
-    u3 = Unit("Battery", "Blue", mobility=1, size=4, quality=4, morale=6)
-    game_map.place_unit(u1, 3, 3)
-    game_map.place_unit(u2, 6, 3)
-    game_map.place_unit(u3, 2, 2)
-
-    return game_map
-
-def main():
-    pygame.init()
-    pygame.display.set_caption("Hex Map Renderer - Napoleonic Wargame Demo")
-    screen = pygame.display.set_mode((WINDOW_W, WINDOW_H), pygame.OPENGL | pygame.DOUBLEBUF)
-    gluOrtho2D(0, WINDOW_W, WINDOW_H, 0)  # match screen coords (0,0) top-left
-
-    clock = pygame.time.Clock()
-    game_map = create_demo_map()
-
-    vis = Visualization(game_map)
-    running = True
-    while running:
-        mouse_pos = pygame.mouse.get_pos()
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                running = False
-
-        hover_info = vis.get_hover_info(mouse_pos)
-
-        glClearColor(0.92, 0.92, 0.92, 1.0)
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        vis.render_map()
-        vis.render_hover_info(hover_info)
-
-        pygame.display.flip()
-        clock.tick(30)
-
-    pygame.quit()
-    sys.exit()
-
-if __name__ == "__main__":
-    main()

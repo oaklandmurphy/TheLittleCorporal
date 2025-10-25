@@ -39,7 +39,7 @@ class ReportGenerator:
         self.h = game_map.height
 
     # -------- Public API --------
-    def generate(self) -> str:
+    def generate_general_summary(self) -> str:
         features = self._find_terrain_clusters()
         major_features = self._select_major_features(features)
         unit_groups = self._group_units()
@@ -63,7 +63,7 @@ class ReportGenerator:
         if contact_line:
             parts.append(contact_line)
 
-        return f"The map is a {self.w}x{self.h} hex grid. ".join(p.strip() for p in parts if p).strip()
+        return " ".join(p.strip() for p in parts if p).strip()
 
     # -------- Terrain analysis --------
     def _find_terrain_clusters(self) -> List[TerrainCluster]:
@@ -134,29 +134,40 @@ class ReportGenerator:
     def _river_phrase(self, c: TerrainCluster) -> str:
         name = self._cluster_feature_name(c)
         core = f"the {name}" if name else "a river"
-        orient = f"running {c.orientation.replace('-', ' ')}" if c.orientation != "diagonal" else "cutting diagonally"
+        
+        # Describe shape and orientation
+        shape = self._describe_shape(c)
+        orient_desc = self._describe_orientation_detailed(c)
         loc = self._soften_center(c.location_phrase)
-        return f"{core} {orient} across {loc}"
+        extent = self._describe_extent(c)
+        
+        return f"{core} {shape} {orient_desc} across {loc}{extent}"
 
     def _hill_phrase(self, c: TerrainCluster) -> str:
         name = self._cluster_feature_name(c)
         scale = self._scale_word(c.size)
         loc = self._soften_center(c.location_phrase)
-        orient = ""
-        if c.orientation in ("east-west", "north-south"):
-            orient = f" forming a {c.orientation.replace('-', ' ')} ridge"
+        shape = self._describe_shape(c)
+        orient = self._describe_orientation_detailed(c)
+        
         if name:
-            # e.g., "the Monti di San Marco forming a ... in the north"
-            return f"the {name}{orient} in {loc}"
-        return f"{scale} hills{orient} in {loc}"
+            return f"the {name}, {shape} highland {orient} in {loc}"
+        
+        # Determine if it's a single hill or ridge
+        if c.orientation in ("east-west", "north-south"):
+            return f"{scale} {shape} ridge {orient} in {loc}"
+        else:
+            return f"{scale} {shape} hills in {loc}"
 
     def _forest_phrase(self, c: TerrainCluster) -> str:
         name = self._cluster_feature_name(c)
         scale = self._scale_word(c.size)
         loc = self._soften_center(c.location_phrase)
+        shape = self._describe_shape(c)
+        
         if name:
-            return f"the {name} in {loc}"
-        return f"{scale} woods in {loc}"
+            return f"the {name}, {shape} woodland in {loc}"
+        return f"{scale} {shape} woods in {loc}"
 
     # -------- Unit analysis --------
     def _group_units(self) -> List[UnitGroup]:
@@ -223,36 +234,310 @@ class ReportGenerator:
     def _faction_paragraph(self, faction: str, groups: List[UnitGroup]) -> str:
         phrases: List[str] = []
         for g in groups:
-            comp_str = self._composition_phrase(g.composition)
-            loc = self._soften_center(g.location_phrase)
+            # Detailed unit listing
+            unit_details = self._describe_unit_group_detailed(g)
+            loc = self._detailed_location(g.centroid, g.location_phrase)
+            
+            # Describe position relative to features
             near = ""
             if g.near_feature and g.relation_to_feature:
-                near = f" {g.relation_to_feature} {self._feature_short(g.near_feature)}"
-            phrases.append(f"{comp_str} {loc}{near}")
+                near = f" {self._describe_position_relative_to_feature(g, g.near_feature, g.relation_to_feature)}"
+            
+            # Formation description
+            formation = self._describe_formation(g)
+            
+            phrases.append(f"{unit_details} {formation} {loc}{near}")
+        
         if not phrases:
             return ""
         return f"{faction} forces are deployed with " + self._oxford_join(phrases) + "."
 
     def _contact_paragraph(self, groups: List[UnitGroup]) -> Optional[str]:
-        # Simple proximity check: if any opposing groups are within ~3 hexes
+        """Provide detailed information about opposing forces in proximity."""
         by_faction = defaultdict(list)
         for g in groups:
             by_faction[g.faction].append(g)
         factions = list(by_faction.keys())
         if len(factions) < 2:
             return None
+        
+        # Find specific opposing groups in proximity
         contacts = []
         for i in range(len(factions)):
             for j in range(i + 1, len(factions)):
                 for a in by_faction[factions[i]]:
                     for b in by_faction[factions[j]]:
-                        if self._dist(a.centroid, b.centroid) <= 3.5:
-                            contacts.append((a, b))
+                        dist = self._dist(a.centroid, b.centroid)
+                        if dist <= 5.0:  # Increased range for reporting
+                            contacts.append((a, b, dist))
+        
         if not contacts:
             return None
-        return "Opposing elements are in close proximity near the center and may soon engage."
+        
+        # Sort by distance (closest first)
+        contacts.sort(key=lambda x: x[2])
+        
+        # Describe the most significant contacts
+        descriptions = []
+        for a, b, dist in contacts[:3]:  # Report up to 3 closest contacts
+            a_desc = self._group_short_name(a)
+            b_desc = self._group_short_name(b)
+            
+            if dist <= 1.5:
+                proximity = "in immediate contact with"
+            elif dist <= 2.5:
+                proximity = "engaged with"
+            elif dist <= 3.5:
+                proximity = "closing on"
+            else:
+                proximity = "approaching"
+            
+            # Add relative direction
+            dx = b.centroid[0] - a.centroid[0]
+            dy = b.centroid[1] - a.centroid[1]
+            direction = self._relative_direction(dx, dy)
+            
+            descriptions.append(f"{a_desc} {proximity} {b_desc} {direction}")
+        
+        if len(descriptions) == 1:
+            return descriptions[0].capitalize() + "."
+        else:
+            return "Combat is imminent: " + self._oxford_join(descriptions) + "."
+    
+    def _group_short_name(self, g: UnitGroup) -> str:
+        """Generate a short identifier for a unit group."""
+        if len(g.members) == 1:
+            unit = g.members[0][0]
+            name = getattr(unit, "name", "Unknown")
+            return f"the {name}"
+        else:
+            # Use dominant type
+            types = list(g.composition.keys())
+            if len(types) == 1:
+                count = sum(g.composition.values())
+                unit_type = types[0].lower()
+                if count == 2:
+                    return f"two {unit_type} units"
+                elif count <= 5:
+                    return f"{self._count_word(count)} {unit_type} units"
+                else:
+                    return f"a {unit_type} formation"
+            else:
+                return f"a {g.faction} formation"
+    
+    def _relative_direction(self, dx: float, dy: float) -> str:
+        """Describe relative direction between two points."""
+        if abs(dx) < 0.5 and abs(dy) < 0.5:
+            return ""
+        
+        if abs(dx) > abs(dy) * 2:
+            return "from the west" if dx > 0 else "from the east"
+        elif abs(dy) > abs(dx) * 2:
+            return "from the north" if dy > 0 else "from the south"
+        else:
+            if dx > 0 and dy > 0:
+                return "from the northwest"
+            elif dx > 0 and dy < 0:
+                return "from the southwest"
+            elif dx < 0 and dy > 0:
+                return "from the northeast"
+            else:
+                return "from the southeast"
 
     # -------- Text helpers --------
+    def _describe_shape(self, c: TerrainCluster) -> str:
+        """Describe the shape of a terrain cluster in natural language."""
+        dx = c.bbox[2] - c.bbox[0] + 1
+        dy = c.bbox[3] - c.bbox[1] + 1
+        ratio = max(dx, dy) / max(1, min(dx, dy))
+        
+        # Measure compactness - how many tiles vs bounding box
+        bbox_area = dx * dy
+        compactness = c.size / max(1, bbox_area)
+        
+        if ratio >= 3.0:
+            if c.terrain_name == "River":
+                return "winding"
+            return "elongated"
+        elif ratio >= 2.0:
+            if c.terrain_name == "River":
+                return "flowing"
+            return "extended"
+        elif compactness >= 0.7:
+            return "compact"
+        elif compactness >= 0.4:
+            return "irregular"
+        else:
+            return "sprawling"
+    
+    def _describe_orientation_detailed(self, c: TerrainCluster) -> str:
+        """Provide detailed orientation description."""
+        if c.orientation == "east-west":
+            return "running east to west"
+        elif c.orientation == "north-south":
+            return "running north to south"
+        elif c.orientation == "diagonal":
+            dx = c.bbox[2] - c.bbox[0]
+            dy = c.bbox[3] - c.bbox[1]
+            # Determine diagonal direction
+            if dx > 0 and dy > 0:
+                return "trending from northwest to southeast"
+            else:
+                return "trending from northeast to southwest"
+        return "oriented irregularly"
+    
+    def _describe_extent(self, c: TerrainCluster) -> str:
+        """Describe how far the feature extends."""
+        dx = c.bbox[2] - c.bbox[0] + 1
+        dy = c.bbox[3] - c.bbox[1] + 1
+        map_span = max(self.w, self.h)
+        
+        max_extent = max(dx, dy)
+        if max_extent >= map_span * 0.7:
+            return ", spanning nearly the entire battlefield"
+        elif max_extent >= map_span * 0.5:
+            return ", extending across much of the region"
+        elif max_extent >= map_span * 0.3:
+            return ", covering a considerable distance"
+        return ""
+    
+    def _describe_unit_group_detailed(self, g: UnitGroup) -> str:
+        """List all units in a group by name and type."""
+        if len(g.members) == 1:
+            unit = g.members[0][0]
+            name = getattr(unit, "name", "Unknown")
+            unit_type = getattr(unit, "__class__", type(unit)).__name__.lower()
+            return f"the {name} ({unit_type})"
+        
+        # Multiple units - group by type and list names
+        by_type: Dict[str, List[str]] = defaultdict(list)
+        for unit, _, _ in g.members:
+            name = getattr(unit, "name", "Unknown")
+            unit_type = getattr(unit, "__class__", type(unit)).__name__.lower()
+            by_type[unit_type].append(name)
+        
+        parts = []
+        for unit_type, names in sorted(by_type.items()):
+            if len(names) == 1:
+                parts.append(f"the {names[0]} ({unit_type})")
+            else:
+                name_list = self._oxford_join([f"the {n}" for n in names])
+                parts.append(f"{name_list} ({unit_type} units)")
+        
+        return self._oxford_join(parts)
+    
+    def _describe_formation(self, g: UnitGroup) -> str:
+        """Describe how units are arranged."""
+        if len(g.members) == 1:
+            return "positioned"
+        
+        # Calculate spread
+        positions = [(x, y) for _, x, y in g.members]
+        if len(positions) < 2:
+            return "positioned"
+        
+        distances = []
+        for i in range(len(positions)):
+            for j in range(i + 1, len(positions)):
+                distances.append(self._dist(positions[i], positions[j]))
+        
+        avg_dist = sum(distances) / len(distances)
+        max_dist = max(distances)
+        
+        if max_dist <= 1.5:
+            return "massed together"
+        elif max_dist <= 3.0:
+            return "in close formation"
+        elif avg_dist >= 4.0:
+            return "dispersed"
+        else:
+            return "deployed"
+    
+    def _detailed_location(self, centroid: Tuple[float, float], base_phrase: str) -> str:
+        """Provide more granular location within the region."""
+        nx = 0.0 if self.w <= 1 else centroid[0] / (self.w - 1)
+        ny = 0.0 if self.h <= 1 else centroid[1] / (self.h - 1)
+        
+        # Add refinement to base direction
+        base = self._soften_center(base_phrase)
+        
+        # Check if near edges
+        modifiers = []
+        if nx < 0.15:
+            modifiers.append("western edge of")
+        elif nx > 0.85:
+            modifiers.append("eastern edge of")
+        
+        if ny < 0.15:
+            modifiers.append("northern edge of")
+        elif ny > 0.85:
+            modifiers.append("southern edge of")
+        
+        if modifiers:
+            return f"at the {' '.join(modifiers)} {base}"
+        
+        return f"in {base}"
+    
+    def _describe_position_relative_to_feature(self, g: UnitGroup, feature: TerrainCluster, relation: str) -> str:
+        """Describe detailed position relative to a terrain feature."""
+        feature_name = self._feature_short(feature)
+        
+        if relation == "on":
+            # Determine which part of the feature
+            member_positions = [(x, y) for _, x, y in g.members]
+            feature_center = feature.centroid
+            
+            # Calculate relative position within feature
+            avg_x = sum(p[0] for p in member_positions) / len(member_positions)
+            avg_y = sum(p[1] for p in member_positions) / len(member_positions)
+            
+            dx = avg_x - feature_center[0]
+            dy = avg_y - feature_center[1]
+            
+            # Determine which part
+            if abs(dx) > abs(dy) * 1.5:
+                if dx > 0:
+                    part = "eastern side of"
+                else:
+                    part = "western side of"
+            elif abs(dy) > abs(dx) * 1.5:
+                if dy > 0:
+                    part = "southern reaches of"
+                else:
+                    part = "northern reaches of"
+            else:
+                part = "occupying"
+            
+            return f"{part} {feature_name}"
+        
+        elif relation == "near":
+            # Determine direction to feature
+            cx, cy = g.centroid
+            fx, fy = feature.centroid
+            dx = fx - cx
+            dy = fy - cy
+            
+            if abs(dx) > abs(dy) * 1.5:
+                direction = "to the east of" if dx > 0 else "to the west of"
+            elif abs(dy) > abs(dx) * 1.5:
+                direction = "to the south of" if dy > 0 else "to the north of"
+            else:
+                if dx > 0 and dy > 0:
+                    direction = "to the southeast of"
+                elif dx > 0 and dy < 0:
+                    direction = "to the northeast of"
+                elif dx < 0 and dy > 0:
+                    direction = "to the southwest of"
+                else:
+                    direction = "to the northwest of"
+            
+            return f"{direction} {feature_name}"
+        
+        elif relation == "in the vicinity of":
+            return f"near the general area of {feature_name}"
+        
+        return f"{relation} {feature_name}"
+
     def _composition_phrase(self, comp: Dict[str, int]) -> str:
         # Example: "two infantry and a cavalry", "artillery and infantry"
         names = []
@@ -301,15 +586,29 @@ class ReportGenerator:
         return ["a", "two", "three", "four", "five"][n-1] if 1 <= n <= 5 else f"{n}"
 
     def _scale_word(self, size: int) -> str:
+        """Describe the scale/size of a terrain feature in natural language."""
         total = self.w * self.h
         frac = size / max(1, total)
-        if frac >= 0.18:
+        
+        # Also consider absolute size
+        if size >= 50:
+            if frac >= 0.18:
+                return "vast"
             return "extensive"
-        if frac >= 0.10:
+        elif size >= 30:
+            if frac >= 0.18:
+                return "extensive"
             return "large"
-        if frac >= 0.05:
-            return "notable"
-        return "scattered"
+        elif size >= 15:
+            if frac >= 0.10:
+                return "large"
+            return "substantial"
+        elif size >= 8:
+            if frac >= 0.05:
+                return "notable"
+            return "moderate"
+        else:
+            return "small"
 
     def _soften_center(self, phrase: str) -> str:
         return "the central area" if phrase == "the center" else phrase

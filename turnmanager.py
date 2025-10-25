@@ -27,17 +27,10 @@ class TurnManager:
                 unit.has_moved = False
 
     def take_turn(self):
-        """Simple AI: each unit moves to a random reachable hex and attempts to rally if morale is low."""
-        import random
+        """Process rally attempts for low-morale units; movement is now handled by StaffOfficer."""
         faction = self.factions[self.current_index]
         for unit in [u for u in self.all_units() if u.faction == faction]:
-            # Move to a random reachable hex (excluding current position)
-            reachable = self.map.find_reachable_hexes(unit)
-            possible = [pos for pos in reachable if pos != (unit.x, unit.y)]
-            if possible:
-                target_hex = random.choice(possible)
-                self.map.move_unit(unit, *target_hex)
-            # Attempt rally if morale low
+            # Only rally if morale is low
             if hasattr(unit, "rally") and unit.morale < 5:
                 unit.rally()
         # Advance to next faction

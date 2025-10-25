@@ -7,6 +7,8 @@ from reporting import ReportGenerator
 import threading
 import queue
 from general import General
+from staff_officer import StaffOfficer
+import os
 import pygame
 import sys
 import json
@@ -97,23 +99,23 @@ def create_demo_map() -> Map:
 	blue_division = "1st Division"
 	blue_corps = "I Corps (France)"
 
-	# All Red units share the same division/corps (Austrian 3rd Corps)
-	red_division = "2nd Division"
-	red_corps = "III Corps (Austrian)"
+	# All Yellow units share the same division/corps (Austrian 3rd Corps)
+	yellow_division = "2nd Division"
+	yellow_corps = "III Corps (Austrian)"
 
 	# Blue forces (French brigadier generals)
-	b1 = Infantry("Brigade Friant", "Blue", blue_division, blue_corps, mobility=4, size=8, quality=3, morale=7)
-	b2 = Infantry("Brigade Gudin", "Blue", blue_division, blue_corps, mobility=4, size=7, quality=3, morale=6)
-	b3 = Infantry("Brigade Morand", "Blue", blue_division, blue_corps, mobility=4, size=5, quality=4, morale=8)
-	b4 = Infantry("Brigade Petit", "Blue", blue_division, blue_corps, mobility=4, size=4, quality=4, morale=6)
-	b5 = Infantry("Brigade Desvaux", "Blue", blue_division, blue_corps, mobility=4, size=4, quality=2, morale=5)
+	b1 = Infantry("Brigade Friant", "French", blue_division, blue_corps, mobility=4, size=8, quality=3, morale=7)
+	b2 = Infantry("Brigade Gudin", "French", blue_division, blue_corps, mobility=4, size=7, quality=3, morale=6)
+	b3 = Infantry("Brigade Morand", "French", blue_division, blue_corps, mobility=4, size=5, quality=4, morale=8)
+	b4 = Infantry("Brigade Petit", "French", blue_division, blue_corps, mobility=4, size=4, quality=4, morale=6)
+	b5 = Infantry("Brigade Desvaux", "French", blue_division, blue_corps, mobility=4, size=4, quality=2, morale=5)
 
-	# Red forces (Austrian brigadier generals)
-	r1 = Infantry("Brigade Klenau", "Red", red_division, red_corps, mobility=4, size=8, quality=3, morale=7)
-	r2 = Infantry("Brigade Hohenlohe", "Red", red_division, red_corps, mobility=4, size=6, quality=4, morale=8)
-	r3 = Infantry("Brigade Vincent", "Red", red_division, red_corps, mobility=4, size=4, quality=4, morale=6)
-	r4 = Infantry("Brigade Lichtenstein", "Red", red_division, red_corps, mobility=4, size=6, quality=4, morale=7)
-	r5 = Infantry("Brigade Vukassovich", "Red", red_division, red_corps, mobility=4, size=5, quality=3, morale=6)
+	# Yellow forces (Austrian brigadier generals)
+	r1 = Infantry("Brigade Klenau", "Austrian", yellow_division, yellow_corps, mobility=4, size=8, quality=3, morale=7)
+	r2 = Infantry("Brigade Hohenlohe", "Austrian", yellow_division, yellow_corps, mobility=4, size=6, quality=4, morale=8)
+	r3 = Infantry("Brigade Vincent", "Austrian", yellow_division, yellow_corps, mobility=4, size=4, quality=4, morale=6)
+	r4 = Infantry("Brigade Lichtenstein", "Austrian", yellow_division, yellow_corps, mobility=4, size=6, quality=4, morale=7)
+	r5 = Infantry("Brigade Vukassovich", "Austrian", yellow_division, yellow_corps, mobility=4, size=5, quality=3, morale=6)
 
 	# Place Blue units (left/center)
 	game_map.place_unit(b1, 3, 3)
@@ -122,7 +124,7 @@ def create_demo_map() -> Map:
 	game_map.place_unit(b4, 2, 4)
 	game_map.place_unit(b5, 4, 4)
 
-	# Place Red units (right/center)
+	# Place Yellow units (right/center)
 	game_map.place_unit(r1, 8, 3)
 	game_map.place_unit(r2, 9, 3)
 	game_map.place_unit(r3, 8, 5)
@@ -131,7 +133,7 @@ def create_demo_map() -> Map:
 
 	# label features and print report
 	game_map.label_terrain_features(seed=123)
-	report = ReportGenerator(game_map).generate()
+	report = ReportGenerator(game_map).generate_general_summary()
 	print(report)
 	return game_map
 
@@ -142,7 +144,7 @@ def main():
 	gluOrtho2D(0, WINDOW_W, WINDOW_H, 0)
 	clock = pygame.time.Clock()
 	game_map = create_demo_map()
-	factions = ["Blue", "Red"]
+	factions = ["French", "Austrian"]
 	turn_manager = TurnManager(game_map, factions)
 	vis = Visualization(game_map)
 	running = True
@@ -152,26 +154,42 @@ def main():
 		general_presets = json.load(f)
 
 	blue_general_preset = general_presets["marmont_preset"]
-	red_general_preset = general_presets["schwarzenberg_preset"]
+	yellow_general_preset = general_presets["schwarzenberg_preset"]
 
-	blue_general = General(unit_list=game_map.get_units_by_faction("Blue"), faction="Blue", identity_prompt=blue_general_preset)
-	red_general = General(unit_list=game_map.get_units_by_faction("Red"), faction="Red", identity_prompt=red_general_preset)
+	blue_general = General(unit_list=game_map.get_units_by_faction("French"), faction="French", identity_prompt=blue_general_preset)
+	yellow_general = General(unit_list=game_map.get_units_by_faction("Austrian"), faction="Austrian", identity_prompt=yellow_general_preset)
+
+	# Staff officers that translate orders into concrete moves via tools
+	staff_officers = {
+		"French": StaffOfficer(name=blue_general.name, unit_list=game_map.get_units_by_faction("French"), game_map=game_map),
+		"Austrian": StaffOfficer(name=yellow_general.name, unit_list=game_map.get_units_by_faction("Austrian"), game_map=game_map),
+	}
 
 	prompt_queue = queue.Queue()
+	# Event to gate when input is allowed to avoid prompting before model output
+	input_allowed = threading.Event()
+	input_allowed.set()  # allow the very first prompt
+
 	def input_thread():
 		while running:
+			# Wait until the main loop signals that we're ready to accept input
+			input_allowed.wait()
+			if not running:
+				break
 			try:
 				prompt = input("\nType your orders for the General (or 'quit' to exit): ")
 				prompt_queue.put(prompt)
+				# Prevent immediately re-prompting until the main loop finishes processing
+				input_allowed.clear()
 			except EOFError:
 				break
 	t = threading.Thread(target=input_thread, daemon=True)
 	t.start()
 
-	# Alternate turns between Blue and Red
+	# Alternate turns between French and Austrian
 	current_faction_index = 0
-	generals = {"Blue": blue_general, "Red": red_general}
-	faction_names = ["Blue", "Red"]
+	generals = {"French": blue_general, "Austrian": yellow_general}
+	faction_names = ["French", "Austrian"]
 
 	while running:
 		mouse_pos = pygame.mouse.get_pos()
@@ -186,6 +204,8 @@ def main():
 			player_prompt = prompt_queue.get()
 			if player_prompt.strip().lower() == "quit":
 				running = False
+				# Unblock input thread if it's waiting
+				input_allowed.set()
 				continue
 
 			# Determine which general's turn it is
@@ -193,16 +213,54 @@ def main():
 			general = generals[current_faction]
 			print(f"\n[{current_faction} General's Turn]")
 
-			map_summary = ReportGenerator(game_map).generate()
+			map_summary = ReportGenerator(game_map).generate_general_summary()
 			general_response = general.get_instructions(player_instructions=player_prompt, map_summary=map_summary)
 			print(f"\n[{current_faction} General's Orders]:\n" + general_response)
 
+			# Staff officer executes the orders by calling movement tools
+			try:
+				so = staff_officers[current_faction]
+				applied = so.process_orders(general_response, map_summary=map_summary, faction=current_faction)
+				if applied.get("ok"):
+					moves = applied.get("applied", [])
+					validation = applied.get("validation", {})
+					if moves:
+						print("\n[Staff Officer Applied Moves]")
+						for m in moves:
+							print(f"- {m.get('tool')} {m.get('args')} -> {m.get('result')}")
+					print(f"\n[Validation] All {len(moves)} units received orders.")
+				else:
+					# Validation failed after all retries
+					print(f"\n[Staff Officer ERROR] {applied.get('error')}")
+					validation = applied.get("validation", {})
+					if validation:
+						print(f"[Validation Details]")
+						if validation.get("missing"):
+							print(f"  Missing orders for: {', '.join(validation['missing'])}")
+						if validation.get("duplicates"):
+							print(f"  Duplicate orders for: {', '.join(validation['duplicates'])}")
+						print(f"  Unit coverage: {validation.get('unit_coverage', {})}")
+					print("[Turn skipped - validation failed after retries]")
+					# Don't advance turn or run turn_manager when validation fails
+					if running:
+						input_allowed.set()
+					continue
+			except Exception as e:
+				print(f"[Staff Officer Error] {e}")
+				if running:
+					input_allowed.set()
+				continue
+
 			turn_manager.run_turns(1)
-			report = ReportGenerator(game_map).generate()
+			report = ReportGenerator(game_map).generate_general_summary()
 			print(report)
 
 			# Alternate to the other faction for the next prompt
 			current_faction_index = (current_faction_index + 1) % 2
+
+			# Signal the input thread we're ready for the next user prompt
+			if running:
+				input_allowed.set()
 
 		hover_info = vis.get_hover_info(mouse_pos)
 		vis.render(hover_info)

@@ -51,7 +51,7 @@ class Unit(ABC):
 		else:
 			print(f"{self.name} fails to rally.")
 
-	def status(self) -> str:
+	def status_general(self) -> str:
 		"""Descriptive status of the unit."""
 		quality_labels = {1: "green", 2: "regular", 3: "seasoned", 4: "veteran", 5: "elite"}
 		morale_labels = {range(0, 2): "broken", range(2, 4): "shaken", range(4, 7): "steady",
@@ -66,7 +66,26 @@ class Unit(ABC):
 					return label
 			return "unknown"
 
-		return (f"{self.name}, {self.division}, {self.corps}. ({self.__class__.__name__}) at ({self.x}, {self.y}) — "
+		return (f"{self.name}. ({self.__class__.__name__}) " # at ({self.x}, {self.y}) — "
+				f"A {label_for(self.size, size_labels)}, {label_for(self.quality, quality_labels)} "
+				f"formation that is {label_for(self.morale, morale_labels)}.")
+	
+	def status_so(self) -> str:
+		"""Descriptive status of the unit."""
+		quality_labels = {1: "green", 2: "regular", 3: "seasoned", 4: "veteran", 5: "elite"}
+		morale_labels = {range(0, 2): "broken", range(2, 4): "shaken", range(4, 7): "steady",
+						range(7, 9): "eager", range(9, 11): "fresh"}
+		size_labels = {range(1, 4): "small", range(4, 7): "average-sized", range(7, 10): "large", range(10, 13): "very large"}
+
+		def label_for(value, table):
+			for key, label in table.items():
+				if isinstance(key, range) and value in key:
+					return label
+				elif value == key:
+					return label
+			return "unknown"
+
+		return (f"{self.name}. ({self.__class__.__name__}) at ({self.x}, {self.y}) — "
 				f"A {label_for(self.size, size_labels)}, {label_for(self.quality, quality_labels)} "
 				f"formation that is {label_for(self.morale, morale_labels)}.")
 
