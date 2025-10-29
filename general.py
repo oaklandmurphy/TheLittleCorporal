@@ -1,5 +1,7 @@
 import ollama
 import json
+import threading
+from typing import Optional, Callable
 
 class General:
 	def __init__(self, faction: str, identity_prompt, unit_list=None, model: str = "llama3.2:3b"):
@@ -13,14 +15,26 @@ class General:
 		self.unit_list = unit_list
 		self.unit_summary = self.update_unit_summary()
 
-	def get_instructions(self, player_instructions="", map_summary=""):
+	def get_instructions(self, player_instructions="", map_summary="", callback: Optional[Callable[[str], None]] = None):
 		"""
 		Passes player instructions and map summary to the LLM and returns the LLM's response as a general.
+		If callback is provided, the query runs in a background thread and callback is called with the result.
+		Otherwise, blocks until result is available.
 		"""
 		system_prompt, prompt = self._build_prompt(player_instructions, map_summary)
-		generals_orders = self._query_general(system_prompt, prompt)
-
-		return generals_orders
+		
+		if callback:
+			# Run asynchronously in a background thread
+			def run_query():
+				result = self._query_general(system_prompt, prompt)
+				callback(result)
+			
+			thread = threading.Thread(target=run_query, daemon=True)
+			thread.start()
+			return None  # callback will receive result
+		else:
+			# Synchronous call (for backward compatibility)
+			return self._query_general(system_prompt, prompt)
 
 	def _build_prompt(self, player_instructions, map_summary):
 		"""

@@ -39,6 +39,193 @@ class ReportGenerator:
         self.h = game_map.height
 
     # -------- Public API --------
+    def generate_so_summary(self) -> dict:
+        """Generate a detailed report with precise coordinates, sizes, and measurements.
+        
+        Returns a structured dictionary containing:
+        - Terrain features with exact coordinates, sizes, and bounding boxes
+        - Unit positions with exact coordinates and groupings
+        - Distance measurements between key elements
+        - Map statistics and coverage percentages
+        """
+        features = self._find_terrain_clusters()
+        major_features = self._select_major_features(features)
+        unit_groups = self._group_units()
+        
+        report = {
+            "map_dimensions": {
+                "width": self.w,
+                "height": self.h,
+                "total_hexes": self.w * self.h
+            },
+            "terrain_features": [],
+            "unit_deployments": [],
+            "proximity_analysis": [],
+            "terrain_coverage": self._calculate_terrain_coverage()
+        }
+        
+        # Detailed terrain features
+        for feature in major_features:
+            feature_data = {
+                "type": feature.terrain_name,
+                "name": self._cluster_feature_name(feature),
+                "size": feature.size,
+                "percentage_of_map": round((feature.size / (self.w * self.h)) * 100, 2),
+                "centroid": {
+                    "x": round(feature.centroid[0], 2),
+                    "y": round(feature.centroid[1], 2)
+                },
+                "bounding_box": {
+                    "min_x": feature.bbox[0],
+                    "min_y": feature.bbox[1],
+                    "max_x": feature.bbox[2],
+                    "max_y": feature.bbox[3],
+                    "width": feature.bbox[2] - feature.bbox[0] + 1,
+                    "height": feature.bbox[3] - feature.bbox[1] + 1
+                },
+                "orientation": feature.orientation,
+                "coordinates": sorted(feature.tiles)  # List all coordinates
+            }
+            report["terrain_features"].append(feature_data)
+        
+        # Detailed unit deployments
+        for group in unit_groups:
+            group_data = {
+                "faction": group.faction,
+                "unit_count": len(group.members),
+                "composition": dict(group.composition),
+                "centroid": {
+                    "x": round(group.centroid[0], 2),
+                    "y": round(group.centroid[1], 2)
+                },
+                "units": []
+            }
+            
+            # List each unit with details
+            for unit, x, y in group.members:
+                unit_data = {
+                    "name": getattr(unit, "name", "Unknown"),
+                    "type": getattr(unit, "__class__", type(unit)).__name__,
+                    "position": {"x": x, "y": y},
+                    "strength": getattr(unit, "strength", None),
+                    "morale": getattr(unit, "morale", None),
+                    "mobility": getattr(unit, "mobility", None)
+                }
+                
+                # Add terrain info at unit position
+                if 0 <= y < self.h and 0 <= x < self.w:
+                    terrain = self.map.grid[y][x].terrain
+                    unit_data["terrain"] = {
+                        "type": getattr(terrain, "name", "Unknown"),
+                        "defense_bonus": getattr(terrain, "defense_bonus", 0),
+                        "move_cost": getattr(terrain, "move_cost", 1)
+                    }
+                
+                group_data["units"].append(unit_data)
+            
+            # Calculate spread/dispersion of the group
+            if len(group.members) > 1:
+                positions = [(x, y) for _, x, y in group.members]
+                distances = []
+                for i in range(len(positions)):
+                    for j in range(i + 1, len(positions)):
+                        distances.append(self._dist(positions[i], positions[j]))
+                group_data["spread_analysis"] = {
+                    "max_distance": round(max(distances), 2),
+                    "avg_distance": round(sum(distances) / len(distances), 2),
+                    "min_distance": round(min(distances), 2)
+                }
+            
+            # Nearest feature info
+            if group.near_feature:
+                feat_dist = self._dist(group.centroid, group.near_feature.centroid)
+                group_data["nearest_terrain_feature"] = {
+                    "type": group.near_feature.terrain_name,
+                    "name": self._cluster_feature_name(group.near_feature),
+                    "relation": group.relation_to_feature,
+                    "distance": round(feat_dist, 2)
+                }
+            
+            report["unit_deployments"].append(group_data)
+        
+        # Proximity analysis between factions
+        by_faction = {}
+        for g in unit_groups:
+            by_faction.setdefault(g.faction, []).append(g)
+        
+        factions = list(by_faction.keys())
+        for i in range(len(factions)):
+            for j in range(i + 1, len(factions)):
+                faction_a = factions[i]
+                faction_b = factions[j]
+                
+                for group_a in by_faction[faction_a]:
+                    for group_b in by_faction[faction_b]:
+                        dist = self._dist(group_a.centroid, group_b.centroid)
+                        
+                        proximity_data = {
+                            "faction_a": faction_a,
+                            "faction_b": faction_b,
+                            "group_a_centroid": {
+                                "x": round(group_a.centroid[0], 2),
+                                "y": round(group_a.centroid[1], 2)
+                            },
+                            "group_b_centroid": {
+                                "x": round(group_b.centroid[0], 2),
+                                "y": round(group_b.centroid[1], 2)
+                            },
+                            "distance": round(dist, 2),
+                            "units_in_group_a": len(group_a.members),
+                            "units_in_group_b": len(group_b.members)
+                        }
+                        
+                        # Calculate relative bearing
+                        dx = group_b.centroid[0] - group_a.centroid[0]
+                        dy = group_b.centroid[1] - group_a.centroid[1]
+                        proximity_data["bearing_a_to_b"] = self._calculate_bearing(dx, dy)
+                        
+                        report["proximity_analysis"].append(proximity_data)
+        
+        # Sort proximity by distance
+        report["proximity_analysis"].sort(key=lambda x: x["distance"])
+        
+        return report
+    
+    def _calculate_terrain_coverage(self) -> dict:
+        """Calculate what percentage of the map is covered by each terrain type."""
+        coverage = {}
+        total = self.w * self.h
+        
+        for y in range(self.h):
+            for x in range(self.w):
+                terrain_name = getattr(self.map.grid[y][x].terrain, "name", "Unknown")
+                coverage[terrain_name] = coverage.get(terrain_name, 0) + 1
+        
+        # Convert to percentages
+        return {
+            terrain: {
+                "hexes": count,
+                "percentage": round((count / total) * 100, 2)
+            }
+            for terrain, count in sorted(coverage.items(), key=lambda x: x[1], reverse=True)
+        }
+    
+    def _calculate_bearing(self, dx: float, dy: float) -> str:
+        """Calculate compass bearing from dx, dy offsets."""
+        if abs(dx) < 0.5 and abs(dy) < 0.5:
+            return "same position"
+        
+        # Calculate angle in degrees (0 = North, 90 = East, etc.)
+        angle = math.degrees(math.atan2(dx, -dy))
+        if angle < 0:
+            angle += 360
+        
+        # Convert to 8-point compass
+        directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+        index = round(angle / 45) % 8
+        
+        return directions[index]
+
     def generate_general_summary(self) -> str:
         features = self._find_terrain_clusters()
         major_features = self._select_major_features(features)

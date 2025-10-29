@@ -1,5 +1,6 @@
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Callable
+import threading
 
 try:
 	import ollama  # type: ignore
@@ -31,14 +32,11 @@ class StaffOfficer:
 					"parameters": {
 						"type": "object",
 						"properties": {
-							"unit_name": {"type": "string"},
-							"destination": {
-								"type": "object",
-								"properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
-								"required": ["x", "y"]
-							}
+							"unit_name": {"type": "string", "description": "Name of the unit to move"},
+							"x": {"type": "integer", "description": "X coordinate of destination"},
+							"y": {"type": "integer", "description": "Y coordinate of destination"}
 						},
-						"required": ["unit_name", "destination"],
+						"required": ["unit_name", "x", "y"],
 					},
 				},
 			},
@@ -50,14 +48,11 @@ class StaffOfficer:
 					"parameters": {
 						"type": "object",
 						"properties": {
-							"unit_name": {"type": "string"},
-							"destination": {
-								"type": "object",
-								"properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
-								"required": ["x", "y"]
-							}
+							"unit_name": {"type": "string", "description": "Name of the unit to move"},
+							"x": {"type": "integer", "description": "X coordinate of destination"},
+							"y": {"type": "integer", "description": "Y coordinate of destination"}
 						},
-						"required": ["unit_name", "destination"],
+						"required": ["unit_name", "x", "y"],
 					},
 				},
 			},
@@ -69,14 +64,11 @@ class StaffOfficer:
 					"parameters": {
 						"type": "object",
 						"properties": {
-							"unit_name": {"type": "string"},
-							"destination": {
-								"type": "object",
-								"properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
-								"required": ["x", "y"]
-							}
+							"unit_name": {"type": "string", "description": "Name of the unit to move"},
+							"x": {"type": "integer", "description": "X coordinate of destination"},
+							"y": {"type": "integer", "description": "Y coordinate of destination"}
 						},
-						"required": ["unit_name", "destination"],
+						"required": ["unit_name", "x", "y"],
 					},
 				},
 			},
@@ -88,14 +80,11 @@ class StaffOfficer:
 					"parameters": {
 						"type": "object",
 						"properties": {
-							"unit_name": {"type": "string"},
-							"destination": {
-								"type": "object",
-								"properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
-								"required": ["x", "y"]
-							}
+							"unit_name": {"type": "string", "description": "Name of the unit to move"},
+							"x": {"type": "integer", "description": "X coordinate of destination"},
+							"y": {"type": "integer", "description": "Y coordinate of destination"}
 						},
-						"required": ["unit_name", "destination"],
+						"required": ["unit_name", "x", "y"],
 					},
 				},
 			},
@@ -103,18 +92,15 @@ class StaffOfficer:
 				"type": "function",
 				"function": {
 					"name": "hold",
-					"description": "Have the named unit hold. Destination is required for schema consistency but ignored.",
+					"description": "Have the named unit hold. X and Y are required for schema consistency but ignored.",
 					"parameters": {
 						"type": "object",
 						"properties": {
-							"unit_name": {"type": "string"},
-							"destination": {
-								"type": "object",
-								"properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
-								"required": ["x", "y"]
-							}
+							"unit_name": {"type": "string", "description": "Name of the unit to hold"},
+							"x": {"type": "integer", "description": "X coordinate (ignored)"},
+							"y": {"type": "integer", "description": "Y coordinate (ignored)"}
 						},
-						"required": ["unit_name", "destination"],
+						"required": ["unit_name", "x", "y"],
 					},
 				},
 			},
@@ -126,34 +112,57 @@ class StaffOfficer:
 					"parameters": {
 						"type": "object",
 						"properties": {
-							"unit_name": {"type": "string"},
-							"destination": {
-								"type": "object",
-								"properties": {
-									"x": {"type": "integer"},
-									"y": {"type": "integer"},
-								},
-								"required": ["x", "y"],
-							},
+							"unit_name": {"type": "string", "description": "Name of the unit to move"},
+							"x": {"type": "integer", "description": "X coordinate of destination"},
+							"y": {"type": "integer", "description": "Y coordinate of destination"}
 						},
-						"required": ["unit_name", "destination"],
+						"required": ["unit_name", "x", "y"],
 					},
 				},
 			},
 		]
 
-	def _parse_destination(self, d):
-		"""Parse destination from various formats, ignoring extra keys except x and y."""
+	def _parse_destination(self, args: Dict[str, Any]):
+		"""Parse destination from various formats in args dict.
+		
+		Tries multiple formats in order:
+		1. Flat x, y parameters (new format)
+		2. Nested destination dict (legacy format)
+		3. String formats for backwards compatibility
+		"""
+		# New format: flat x, y parameters
+		if "x" in args and "y" in args:
+			try:
+				return (int(args["x"]), int(args["y"]))
+			except (ValueError, TypeError):
+				pass
+		
+		# Legacy format: nested destination object
+		d = args.get("destination")
+		if d is None:
+			return None
+			
 		if isinstance(d, dict):
-			# Only use x and y, ignore all other keys
 			if "x" in d and "y" in d:
-				return (int(d["x"]), int(d["y"]))
+				try:
+					return (int(d["x"]), int(d["y"]))
+				except (ValueError, TypeError):
+					pass
 		if isinstance(d, (list, tuple)) and len(d) == 2:
-			return (int(d[0]), int(d[1]))
+			try:
+				return (int(d[0]), int(d[1]))
+			except (ValueError, TypeError):
+				pass
 		if isinstance(d, str):
-			# Handle string format like "(4, 2)" or "4, 2"
+			# Handle double-encoded JSON string like '{"x":4,"y":2}'
+			try:
+				parsed = json.loads(d)
+				if isinstance(parsed, dict) and "x" in parsed and "y" in parsed:
+					return (int(parsed["x"]), int(parsed["y"]))
+			except (json.JSONDecodeError, ValueError, KeyError):
+				pass
+			# Handle string formats like "(4, 2)" or "4, 2"
 			import re
-			# Remove parentheses and split by comma
 			cleaned = d.strip().strip("()").strip()
 			match = re.match(r'^\s*(\d+)\s*,\s*(\d+)\s*$', cleaned)
 			if match:
@@ -165,7 +174,7 @@ class StaffOfficer:
 		if name not in ("advance", "retreat", "flank_left", "flank_right", "hold", "march"):
 			return {"ok": False, "error": f"Unknown tool: {name}"}
 		
-		dest = self._parse_destination(args.get("destination"))
+		dest = self._parse_destination(args)
 		if dest is None:
 			return {"ok": False, "error": "Invalid destination"}
 		
@@ -183,7 +192,7 @@ class StaffOfficer:
 
 	def _execute_tool(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
 		"""Execute a validated tool call on the map."""
-		dest = self._parse_destination(args.get("destination"))
+		dest = self._parse_destination(args)
 		if dest is None:
 			return {"ok": False, "error": "Invalid destination"}
 		
@@ -237,11 +246,28 @@ class StaffOfficer:
 			f"6. If an order is unclear, make a reasonable tactical decision\n\n"
 		)
 
-	def process_orders(self, orders: str, faction: Optional[str] = None, max_rounds: int = 8, map_summary: str = "", num_thread=4, num_ctx=4096, max_retries: int = 2) -> Dict[str, Any]:
+	def process_orders(self, orders: str, faction: Optional[str] = None, max_rounds: int = 8, map_summary: str = "", num_thread=4, num_ctx=4096, max_retries: int = 2, callback: Optional[Callable[[Dict[str, Any]], None]] = None) -> Optional[Dict[str, Any]]:
 		"""Run the LLM with tool calling against the given orders and apply moves to the map.
 		
 		If validation fails (missing or duplicate orders), retry up to max_retries times with feedback.
+		If callback is provided, runs asynchronously in a background thread and returns None (callback receives result).
+		Otherwise, blocks and returns the result.
 		"""
+		if callback:
+			# Run asynchronously in a background thread
+			def run_process():
+				result = self._process_orders_sync(orders, faction, max_rounds, map_summary, num_thread, num_ctx, max_retries)
+				callback(result)
+			
+			thread = threading.Thread(target=run_process, daemon=True)
+			thread.start()
+			return None  # callback will receive result
+		else:
+			# Synchronous call (for backward compatibility)
+			return self._process_orders_sync(orders, faction, max_rounds, map_summary, num_thread, num_ctx, max_retries)
+	
+	def _process_orders_sync(self, orders: str, faction: Optional[str] = None, max_rounds: int = 8, map_summary: str = "", num_thread=4, num_ctx=4096, max_retries: int = 2) -> Dict[str, Any]:
+		"""Synchronous implementation of process_orders."""
 		if ollama is None:
 			return {"ok": False, "error": "ollama Python package not available"}
 
@@ -264,7 +290,7 @@ class StaffOfficer:
 			
 			for round_num in range(max_rounds):
 				
-				resp = ollama.chat(model=self.model, messages=messages, tools=self.tools, options={"num_thread": num_thread, "num_ctx": num_ctx})
+				resp = ollama.chat(model=self.model, messages=messages, tools=self.tools, options={"num_thread": num_thread, "num_ctx": num_ctx, "temperature": 0})
 				msg = resp.get("message", {})
 				tool_calls = msg.get("tool_calls") or []
 

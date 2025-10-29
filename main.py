@@ -133,8 +133,6 @@ def create_demo_map() -> Map:
 
 	# label features and print report
 	game_map.label_terrain_features(seed=123)
-	report = ReportGenerator(game_map).generate_general_summary()
-	print(report)
 	return game_map
 
 def main():
@@ -149,26 +147,50 @@ def main():
 	vis = Visualization(game_map)
 	running = True
 
+	print("\n--- Welcome to The Little Corporal Napoleonic Wargame Demo ---\n")
+	print("[ABSTRACT MAP DESCRIPTION]: \n")
+	print(ReportGenerator(game_map).generate_general_summary())
+	print("\n----------------------------------------\n")
+	print("[PRECISE MAP DESCRIPTION]: \n")
+	print(ReportGenerator(game_map).generate_so_summary())
+
 	# Load general presets from JSON
 	with open("general_presets.json", "r", encoding="utf-8") as f:
 		general_presets = json.load(f)
 
-	blue_general_preset = general_presets["marmont_preset"]
-	yellow_general_preset = general_presets["schwarzenberg_preset"]
-
-	blue_general = General(unit_list=game_map.get_units_by_faction("French"), faction="French", identity_prompt=blue_general_preset)
-	yellow_general = General(unit_list=game_map.get_units_by_faction("Austrian"), faction="Austrian", identity_prompt=yellow_general_preset)
+	# Create generals for each faction
+	generals = {
+		"French": General(
+			unit_list=game_map.get_units_by_faction("French"), 
+			faction="French", 
+			identity_prompt=general_presets["marmont_preset"]
+		),
+		"Austrian": General(
+			unit_list=game_map.get_units_by_faction("Austrian"), 
+			faction="Austrian", 
+			identity_prompt=general_presets["schwarzenberg_preset"]
+		)
+	}
 
 	# Staff officers that translate orders into concrete moves via tools
 	staff_officers = {
-		"French": StaffOfficer(name=blue_general.name, unit_list=game_map.get_units_by_faction("French"), game_map=game_map),
-		"Austrian": StaffOfficer(name=yellow_general.name, unit_list=game_map.get_units_by_faction("Austrian"), game_map=game_map),
+		faction: StaffOfficer(
+			name=generals[faction].name, 
+			unit_list=game_map.get_units_by_faction(faction), 
+			game_map=game_map
+		)
+		for faction in factions
 	}
 
 	prompt_queue = queue.Queue()
+	result_queue = queue.Queue()  # Queue for LLM results
 	# Event to gate when input is allowed to avoid prompting before model output
 	input_allowed = threading.Event()
 	input_allowed.set()  # allow the very first prompt
+	processing_llm = threading.Event()  # Track when LLM is processing
+	
+	# Alternate turns between factions
+	current_faction_index = 0
 
 	def input_thread():
 		while running:
@@ -177,19 +199,18 @@ def main():
 			if not running:
 				break
 			try:
-				prompt = input("\nType your orders for the General (or 'quit' to exit): ")
+				# Get current general info for the prompt
+				faction = factions[current_faction_index]
+				general = generals[faction]
+				prompt = input(f"\nType your orders for {general.name} ({faction}) (or 'quit' to exit): ")
 				prompt_queue.put(prompt)
 				# Prevent immediately re-prompting until the main loop finishes processing
 				input_allowed.clear()
 			except EOFError:
 				break
+	
 	t = threading.Thread(target=input_thread, daemon=True)
 	t.start()
-
-	# Alternate turns between French and Austrian
-	current_faction_index = 0
-	generals = {"French": blue_general, "Austrian": yellow_general}
-	faction_names = ["French", "Austrian"]
 
 	while running:
 		mouse_pos = pygame.mouse.get_pos()
@@ -209,18 +230,49 @@ def main():
 				continue
 
 			# Determine which general's turn it is
-			current_faction = faction_names[current_faction_index]
+			current_faction = factions[current_faction_index]
 			general = generals[current_faction]
 			print(f"\n[{current_faction} General's Turn]")
 
-			map_summary = ReportGenerator(game_map).generate_general_summary()
-			general_response = general.get_instructions(player_instructions=player_prompt, map_summary=map_summary)
-			print(f"\n[{current_faction} General's Orders]:\n" + general_response)
+			processing_llm.set()  # Mark that we're processing
+			print("\n[Thinking...")
 
-			# Staff officer executes the orders by calling movement tools
-			try:
+			general_map_summary = ReportGenerator(game_map).generate_general_summary()
+			
+			# Store state for async callback
+			class ProcessingState:
+				def __init__(self):
+					self.general_response = None
+					self.staff_result = None
+			
+			state = ProcessingState()
+			
+			# Async callback for general's response
+			def on_general_response(response):
+				state.general_response = response
+				print(f"\n[{current_faction} General's Orders]:\n" + response)
+				print("\n[Staff Officer processing orders...]")
+				
+				# Now call staff officer asynchronously
 				so = staff_officers[current_faction]
-				applied = so.process_orders(general_response, map_summary=map_summary, faction=current_faction)
+				so_map_summary = ReportGenerator(game_map).generate_general_summary()
+				
+				def on_staff_result(applied):
+					state.staff_result = applied
+					result_queue.put({"faction": current_faction, "applied": applied})
+				
+				so.process_orders(response, map_summary=so_map_summary, faction=current_faction, callback=on_staff_result)
+			
+			# Start the async chain
+			general.get_instructions(player_instructions=player_prompt, map_summary=general_map_summary, callback=on_general_response)
+		
+		# Check for LLM results
+		if not result_queue.empty():
+			result = result_queue.get()
+			current_faction = result["faction"]
+			applied = result["applied"]
+			
+			try:
 				if applied.get("ok"):
 					moves = applied.get("applied", [])
 					validation = applied.get("validation", {})
@@ -242,11 +294,13 @@ def main():
 						print(f"  Unit coverage: {validation.get('unit_coverage', {})}")
 					print("[Turn skipped - validation failed after retries]")
 					# Don't advance turn or run turn_manager when validation fails
+					processing_llm.clear()
 					if running:
 						input_allowed.set()
 					continue
 			except Exception as e:
 				print(f"[Staff Officer Error] {e}")
+				processing_llm.clear()
 				if running:
 					input_allowed.set()
 				continue
@@ -258,11 +312,21 @@ def main():
 			# Alternate to the other faction for the next prompt
 			current_faction_index = (current_faction_index + 1) % 2
 
+			processing_llm.clear()
 			# Signal the input thread we're ready for the next user prompt
 			if running:
 				input_allowed.set()
 
 		hover_info = vis.get_hover_info(mouse_pos)
+		# Add processing indicator to hover_info if LLM is processing
+		if processing_llm.is_set():
+			if hover_info is None:
+				hover_info = {"processing": True}
+			elif isinstance(hover_info, list):
+				# Convert list to dict format with processing flag
+				hover_info = {"lines": hover_info, "processing": True}
+			else:
+				hover_info["processing"] = True
 		vis.render(hover_info)
 		pygame.display.flip()
 		clock.tick(30)

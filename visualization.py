@@ -223,17 +223,41 @@ class Visualization:
     def render_hover_info(self, hover_info):
         if not hover_info:
             return
-        # Normalize to list of lines
-        if isinstance(hover_info, str):
+        
+        # Check if processing indicator is set
+        processing = False
+        lines = []
+        
+        if isinstance(hover_info, dict):
+            processing = hover_info.get("processing", False)
+            # Get lines from dict
+            if "lines" in hover_info:
+                lines = hover_info["lines"]
+            elif len(hover_info) > 1 or not processing:
+                # Dict contains other data besides processing flag
+                lines = [str(v) for k, v in hover_info.items() if k != "processing"]
+        elif isinstance(hover_info, str):
             lines = hover_info.splitlines()
+        elif isinstance(hover_info, list):
+            lines = hover_info
         else:
-            lines = list(hover_info)
+            lines = []
+
+        # Add processing indicator at the top
+        if processing:
+            lines.insert(0, "⏳ AI Thinking...")
+
+        if not lines:
+            return
 
         x = 20
         y = 20
         line_gap = 4
         for i, line in enumerate(lines):
-            text_surface = self.font.render(line, True, (20, 20, 20), (255, 255, 220))
+            # Use yellow background for processing indicator
+            bg_color = (255, 255, 180) if i == 0 and processing else (255, 255, 220)
+            text_color = (150, 80, 0) if i == 0 and processing else (20, 20, 20)
+            text_surface = self.font.render(line, True, text_color, bg_color)
             text_data = pygame.image.tostring(text_surface, "RGBA", True)
             glWindowPos2d(x, y + i * (self.font.get_height() + line_gap))
             glDrawPixels(text_surface.get_width(), text_surface.get_height(), GL_RGBA, GL_UNSIGNED_BYTE, text_data)
