@@ -156,13 +156,21 @@ def main():
 	blue_general_preset = general_presets["marmont_preset"]
 	yellow_general_preset = general_presets["schwarzenberg_preset"]
 
-	blue_general = General(unit_list=game_map.get_units_by_faction("French"), faction="French", identity_prompt=blue_general_preset)
-	yellow_general = General(unit_list=game_map.get_units_by_faction("Austrian"), faction="Austrian", identity_prompt=yellow_general_preset)
+	# set up remote host
+	# use None for local ollama
+	host = "25.0.75.161" # None
+
+	# specify model
+	# model = "deepseek-r1:8b"
+	model = "llama3.2:3b"
+
+	blue_general = General(unit_list=game_map.get_units_by_faction("French"), faction="French", model=model, identity_prompt=blue_general_preset, ollama_host=host)
+	yellow_general = General(unit_list=game_map.get_units_by_faction("Austrian"), faction="Austrian", model=model, identity_prompt=yellow_general_preset, ollama_host=host)
 
 	# Staff officers that translate orders into concrete moves via tools
 	staff_officers = {
-		"French": StaffOfficer(name=blue_general.name, unit_list=game_map.get_units_by_faction("French"), game_map=game_map),
-		"Austrian": StaffOfficer(name=yellow_general.name, unit_list=game_map.get_units_by_faction("Austrian"), game_map=game_map),
+		"French": StaffOfficer(name=blue_general.name, unit_list=game_map.get_units_by_faction("French"), game_map=game_map, model=model, ollama_host=host),
+		"Austrian": StaffOfficer(name=yellow_general.name, unit_list=game_map.get_units_by_faction("Austrian"), game_map=game_map, model=model, ollama_host=host),
 	}
 
 	prompt_queue = queue.Queue()

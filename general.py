@@ -2,11 +2,22 @@ import ollama
 import json
 
 class General:
-	def __init__(self, faction: str, identity_prompt, unit_list=None, model: str = "llama3.2:3b"):
+	def __init__(self, faction: str, identity_prompt, unit_list=None, model: str = "llama3.2:3b", ollama_host: str = None):
 		"""
 		llm_command: List[str] - The command to run the local LLM (e.g., ["ollama", "run", "mymodel"])
+		ollama_host: str - The Ollama API host URL (e.g., "http://localhost:11434")
 		"""
 		self.llm_command = ["ollama", "run", model]
+		self.model = model
+		self.ollama_host = ollama_host
+		if ollama_host:
+			self.client = ollama.Client(host=ollama_host)
+			if self.client is not None:
+				print(f"Using remote Ollama host at {ollama_host}")
+			else:
+				print(f"Failed to connect to Ollama host at {ollama_host}, please check the host URL.")
+		else:
+			self.client = ollama
 		self.name = identity_prompt.get("name", "General")
 		self.description = identity_prompt.get("description", "")
 		self.faction = faction
@@ -67,8 +78,8 @@ class General:
 				"content": system_prompt
 			}
 			user_message = {"role": "user", "content": prompt}
-			response = ollama.chat(
-				model="llama3",
+			response = self.client.chat(
+				model=self.model,
 				messages=[system_message, user_message],
 				options={"num_thread": num_thread, "num_ctx": num_ctx}
 			)
