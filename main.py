@@ -158,7 +158,8 @@ def main():
 
 	# set up remote host
 	# use None for local ollama
-	host = "25.0.75.161" # None
+	# host = "25.0.75.161"
+	host = None
 
 	# specify model
 	# model = "deepseek-r1:8b"
