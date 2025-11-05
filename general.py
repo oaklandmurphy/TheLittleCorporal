@@ -12,10 +12,6 @@ class General:
 		self.ollama_host = ollama_host
 		if ollama_host:
 			self.client = ollama.Client(host=ollama_host)
-			if self.client is not None:
-				print(f"Using remote Ollama host at {ollama_host}")
-			else:
-				print(f"Failed to connect to Ollama host at {ollama_host}, please check the host URL.")
 		else:
 			self.client = ollama
 		self.name = identity_prompt.get("name", "General")
