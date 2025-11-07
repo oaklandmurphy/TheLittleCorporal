@@ -1,15 +1,24 @@
 from map import Map
 from unit import Unit
+import pygame
+import sys
+import queue
+import threading
+from reporting import generate_tactical_report
 
 class TurnManager:
     """Manages turn order and unit actions for factions."""
     def __init__(self, game_map: Map, factions: list[str]):
         self.map = game_map
         self.factions = factions
-        self.current_index = 0  # index of current faction
+        self.current_faction_index = 0
+
+    def get_current_faction(self):
+        """Get the name of the current faction."""
+        return self.factions[self.current_faction_index]
 
     def all_units(self):
-        # Collect all units currently on the map
+        """Collect all units currently on the map."""
         units = []
         for row in self.map.grid:
             for hex in row:
@@ -17,26 +26,211 @@ class TurnManager:
                     units.append(hex.unit)
         return units
 
-    def start_turn(self):
-        """Reset mobility for all units of the current faction."""
-        faction = self.factions[self.current_index]
-        print(f"\n--- {faction} turn ---")
+    def process_turn_start(self):
+        """Execute turn start sequence: engagement check, reset mobility, apply combat damage."""
+        current_faction = self.get_current_faction()
+        
+        # 1. Print which faction's turn it is
+        print(f"\n{'='*60}")
+        print(f"--- {current_faction.upper()} TURN ---")
+        print(f"{'='*60}")
+        
+        # 2. Reset engagement flags from previous turn
         for unit in self.all_units():
-            if unit.faction == faction and hasattr(unit, "set_mobility"):
-                unit.set_mobility()  # reset mobility for the turn
+            unit.engaged = False
+        
+        # 3. Check for all units engagement status and reset movement
+        self.map.check_all_engagements()
+        
+        # Reset mobility for current faction's units
+        for unit in self.all_units():
+            if unit.faction == current_faction:
+                if hasattr(unit, "set_mobility"):
+                    unit.set_mobility()
                 unit.has_moved = False
+        
+        # 4. Engaged units deal damage to each other
+        self.map.apply_engagement_damage()
 
-    def take_turn(self):
-        """Process rally attempts for low-morale units; movement is now handled by StaffOfficer."""
-        faction = self.factions[self.current_index]
-        for unit in [u for u in self.all_units() if u.faction == faction]:
-            # Only rally if morale is low
-            if hasattr(unit, "rally") and unit.morale < 5:
-                unit.rally()
-        # Advance to next faction
-        self.current_index = (self.current_index + 1) % len(self.factions)
+    def advance_to_next_faction(self):
+        """Move to the next faction's turn."""
+        self.current_faction_index = (self.current_faction_index + 1) % len(self.factions)
 
-    def run_turns(self, num_turns: int = 1):
-        for _ in range(num_turns):
-            self.start_turn()
-            self.take_turn()
+    def run_game_loop(self, vis, generals, staff_officers, clock, max_retries=9, num_threads=4, num_ctx=4096):
+        """Main game loop that handles rendering, input, and turn processing."""
+        running = True
+        
+        # Queues and events for multithreading
+        prompt_queue = queue.Queue()
+        input_allowed = threading.Event()
+        llm_result_queue = queue.Queue()
+        llm_processing = threading.Event()
+        
+        # Flags for turn state management
+        turn_started = False
+        waiting_for_input = False
+        
+        # Input thread - runs continuously in background
+        def input_thread():
+            while running:
+                input_allowed.wait()
+                if not running:
+                    break
+                try:
+                    prompt = input("\nType your orders for the General (or 'quit' to exit): ")
+                    prompt_queue.put(prompt)
+                    input_allowed.clear()
+                except EOFError:
+                    break
+        
+        input_thread_obj = threading.Thread(target=input_thread, daemon=True)
+        input_thread_obj.start()
+        
+        # LLM processing thread - handles general and staff officer interactions
+        def llm_processing_thread(player_prompt, current_faction, general, map_summary, staff_officer):
+            """Run LLM calls in background thread to keep pygame responsive."""
+            try:
+                print(f"\n[{current_faction} General's Turn]")
+                
+                # General responds to player instructions
+                general_response = general.get_instructions(
+                    player_instructions=player_prompt, 
+                    map_summary=map_summary
+                )
+                print(f"\n[{current_faction} General's Orders]:\n{general_response}")
+                
+                # Staff officer executes orders
+                applied = staff_officer.process_orders(
+                    general_response, 
+                    map_summary=map_summary, 
+                    faction=current_faction, 
+                    max_retries=max_retries
+                )
+                
+                llm_result_queue.put({
+                    "success": True,
+                    "applied": applied,
+                    "current_faction": current_faction
+                })
+            except Exception as e:
+                print(f"[LLM Processing Error] {e}")
+                llm_result_queue.put({
+                    "success": False,
+                    "error": str(e),
+                    "current_faction": current_faction
+                })
+            finally:
+                llm_processing.clear()
+        
+        # Main game loop
+        while running:
+            # Handle pygame events
+            mouse_pos = pygame.mouse.get_pos()
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    running = False
+            
+            # TURN SEQUENCE
+            # Step 1-4: Process turn start (engagement, mobility, combat damage)
+            if not turn_started:
+                self.process_turn_start()
+                turn_started = True
+                waiting_for_input = True
+            
+            # Step 5: Print battlefield summary and Step 6: Prompt for input
+            if waiting_for_input and not llm_processing.is_set():
+                current_faction = self.get_current_faction()
+                current_general = generals[current_faction]
+                
+                # Generate and print tactical report
+                map_summary = generate_tactical_report(
+                    self.map, 
+                    current_faction, 
+                    current_general.unit_list
+                )
+                print("\n" + map_summary)
+                
+                # Allow input
+                waiting_for_input = False
+                input_allowed.set()
+            
+            # Step 7: Check for player input and resolve LLM interactions
+            if not prompt_queue.empty() and not llm_processing.is_set():
+                player_prompt = prompt_queue.get()
+                
+                # Handle quit command
+                if player_prompt.strip().lower() == "quit":
+                    running = False
+                    input_allowed.set()
+                    continue
+                
+                # Get current turn information
+                current_faction = self.get_current_faction()
+                general = generals[current_faction]
+                staff_officer = staff_officers[current_faction]
+                
+                # Generate tactical report for LLM context
+                map_summary = generate_tactical_report(
+                    self.map, 
+                    current_faction, 
+                    general.unit_list
+                )
+                
+                # Start LLM processing in background
+                llm_processing.set()
+                llm_thread = threading.Thread(
+                    target=llm_processing_thread,
+                    args=(player_prompt, current_faction, general, map_summary, staff_officer),
+                    daemon=True
+                )
+                llm_thread.start()
+            
+            # Check if LLM processing has completed
+            if not llm_result_queue.empty():
+                result = llm_result_queue.get()
+                
+                if result["success"]:
+                    applied = result["applied"]
+                    if applied.get("ok"):
+                        moves = applied.get("applied", [])
+                        if moves:
+                            print("\n[Staff Officer Applied Moves]")
+                            for m in moves:
+                                print(f"  - {m.get('tool')} {m.get('args')} -> {m.get('result')}")
+                        print(f"\n[Turn Complete] {len(moves)} unit(s) received orders.")
+                        
+                        # Advance to next faction's turn
+                        self.advance_to_next_faction()
+                        turn_started = False
+                    else:
+                        # Validation failed
+                        print(f"\n[Staff Officer ERROR] {applied.get('error')}")
+                        validation = applied.get("validation", {})
+                        if validation:
+                            print("[Validation Details]")
+                            if validation.get("missing"):
+                                print(f"  Missing orders: {', '.join(validation['missing'])}")
+                            if validation.get("duplicates"):
+                                print(f"  Duplicate orders: {', '.join(validation['duplicates'])}")
+                        print("[Turn skipped - validation failed]")
+                        
+                        # Still advance turn even on failure
+                        self.advance_to_next_faction()
+                        turn_started = False
+                else:
+                    print(f"[Error] {result.get('error', 'Unknown error')}")
+                    # Advance turn on error too
+                    self.advance_to_next_faction()
+                    turn_started = False
+            
+            # Render the visualization
+            hover_info = vis.get_hover_info(mouse_pos)
+            vis.render(hover_info, llm_processing=llm_processing.is_set())
+            pygame.display.flip()
+            clock.tick(30)
+        
+        # Clean up
+        pygame.quit()
+        sys.exit()

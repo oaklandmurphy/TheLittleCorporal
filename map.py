@@ -64,6 +64,84 @@ class Map:
         unit.move(target_x, target_y, reachable[(target_x, target_y)])
         return True
 
+    def check_and_engage_combat(self, unit: Unit):
+        """Check if a unit is adjacent to enemy units and engage them in combat."""
+        for nx, ny in self.get_neighbors(unit.x, unit.y):
+            if not (0 <= nx < self.width and 0 <= ny < self.height):
+                continue
+            enemy = self.grid[ny][nx].unit
+            if enemy and enemy.faction != unit.faction:
+                # Both units become engaged
+                unit.engaged = True
+                enemy.engaged = True
+                print(f"{unit.name} engages {enemy.name}!")
+
+    def check_all_engagements(self):
+        """Check all units on the map and engage adjacent enemies."""
+        processed = set()
+        for y in range(self.height):
+            for x in range(self.width):
+                unit = self.grid[y][x].unit
+                if not unit or (x, y) in processed:
+                    continue
+                
+                # Check for adjacent enemies
+                for nx, ny in self.get_neighbors(x, y):
+                    if not (0 <= nx < self.width and 0 <= ny < self.height):
+                        continue
+                    enemy = self.grid[ny][nx].unit
+                    if enemy and enemy.faction != unit.faction:
+                        # Both units become engaged
+                        unit.engaged = True
+                        enemy.engaged = True
+                        if (nx, ny) not in processed:
+                            print(f"{unit.name} engages {enemy.name}!")
+                        processed.add((x, y))
+                        processed.add((nx, ny))
+
+    def apply_engagement_damage(self):
+        """Apply combat damage to all engaged units."""
+        processed = set()
+        for y in range(self.height):
+            for x in range(self.width):
+                unit = self.grid[y][x].unit
+                if not unit or not unit.engaged or (x, y) in processed:
+                    continue
+                
+                # Find adjacent engaged enemies
+                for nx, ny in self.get_neighbors(x, y):
+                    if not (0 <= nx < self.width and 0 <= ny < self.height):
+                        continue
+                    enemy = self.grid[ny][nx].unit
+                    if enemy and enemy.faction != unit.faction and enemy.engaged:
+                        # Avoid processing the same pair twice
+                        if (nx, ny) in processed:
+                            continue
+                        
+                        # Calculate combat power for both units
+                        unit_power = unit.combat_power(self.get_terrain(unit.x, unit.y))
+                        enemy_power = enemy.combat_power(self.get_terrain(enemy.x, enemy.y))
+                        
+                        # Apply damage
+                        damage_to_enemy = max(1, int(unit_power / 10))
+                        damage_to_unit = max(1, int(enemy_power / 10))
+                        
+                        print(f"Combat: {unit.name} (power {unit_power:.1f}) vs {enemy.name} (power {enemy_power:.1f})")
+                        
+                        enemy.take_damage(damage_to_enemy)
+                        unit.take_damage(damage_to_unit)
+                        
+                        # Remove routed units
+                        if enemy.is_routed():
+                            self.grid[ny][nx].unit = None
+                        if unit.is_routed():
+                            self.grid[y][x].unit = None
+                        
+                        # Mark both as processed
+                        processed.add((x, y))
+                        processed.add((nx, ny))
+                        break  # Only process one enemy per unit per turn
+
     def move_units_toward_destinations(self, movement_orders: dict) -> dict:
         """Move units toward their destination hexes in order.
         
@@ -250,116 +328,116 @@ class Map:
                 best_hex = (rx, ry)
         return best_hex
 
-    def advance(self, unit_name: str, destination: Tuple[int, int]) -> dict:
-        """Advance the named unit toward a destination hex using pathfinding."""
-        unit = self._find_unit_by_name(unit_name)
-        if not unit:
-            return {"ok": False, "error": "Unit not found"}
-        target = (int(destination[0]), int(destination[1]))
-        # Move to destination if in range, otherwise get closest reachable toward it
-        reachable = self.find_reachable_hexes(unit)
-        if target in reachable:
-            moved = self.move_unit(unit, *target)
-            return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
-        best = self._best_reachable_toward(unit, target)
-        if not best:
-            return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No reachable hex"}
-        moved = self.move_unit(unit, best[0], best[1])
-        return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+    # def advance(self, unit_name: str, destination: Tuple[int, int]) -> dict:
+    #     """Advance the named unit toward a destination hex using pathfinding."""
+    #     unit = self._find_unit_by_name(unit_name)
+    #     if not unit:
+    #         return {"ok": False, "error": "Unit not found"}
+    #     target = (int(destination[0]), int(destination[1]))
+    #     # Move to destination if in range, otherwise get closest reachable toward it
+    #     reachable = self.find_reachable_hexes(unit)
+    #     if target in reachable:
+    #         moved = self.move_unit(unit, *target)
+    #         return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+    #     best = self._best_reachable_toward(unit, target)
+    #     if not best:
+    #         return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No reachable hex"}
+    #     moved = self.move_unit(unit, best[0], best[1])
+    #     return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
 
-    def retreat(self, unit_name: str, destination: Tuple[int, int]) -> dict:
-        """Fall back toward a designated destination, preferring to increase distance from the nearest enemy."""
-        unit = self._find_unit_by_name(unit_name)
-        if not unit:
-            return {"ok": False, "error": "Unit not found"}
-        dest = (int(destination[0]), int(destination[1]))
-        enemy_pos = self._nearest_enemy_pos(unit)
-        reachable = self.find_reachable_hexes(unit)
-        if not reachable:
-            return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No reachable hex"}
-        # Score: maximize distance to enemy (if known), then minimize distance to destination
-        best_hex = None
-        best_score = None
-        for (rx, ry) in reachable.keys():
-            if (rx, ry) == (unit.x, unit.y):
-                continue
-            dist_enemy = self._hex_distance(rx, ry, enemy_pos[0], enemy_pos[1]) if enemy_pos else 0
-            dist_dest = self._hex_distance(rx, ry, dest[0], dest[1])
-            score = (dist_enemy, -dist_dest)
-            if best_score is None or score > best_score:
-                best_score = score
-                best_hex = (rx, ry)
-        if not best_hex:
-            return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No better hex"}
-        moved = self.move_unit(unit, best_hex[0], best_hex[1])
-        return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+    # def retreat(self, unit_name: str, destination: Tuple[int, int]) -> dict:
+    #     """Fall back toward a designated destination, preferring to increase distance from the nearest enemy."""
+    #     unit = self._find_unit_by_name(unit_name)
+    #     if not unit:
+    #         return {"ok": False, "error": "Unit not found"}
+    #     dest = (int(destination[0]), int(destination[1]))
+    #     enemy_pos = self._nearest_enemy_pos(unit)
+    #     reachable = self.find_reachable_hexes(unit)
+    #     if not reachable:
+    #         return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No reachable hex"}
+    #     # Score: maximize distance to enemy (if known), then minimize distance to destination
+    #     best_hex = None
+    #     best_score = None
+    #     for (rx, ry) in reachable.keys():
+    #         if (rx, ry) == (unit.x, unit.y):
+    #             continue
+    #         dist_enemy = self._hex_distance(rx, ry, enemy_pos[0], enemy_pos[1]) if enemy_pos else 0
+    #         dist_dest = self._hex_distance(rx, ry, dest[0], dest[1])
+    #         score = (dist_enemy, -dist_dest)
+    #         if best_score is None or score > best_score:
+    #             best_score = score
+    #             best_hex = (rx, ry)
+    #     if not best_hex:
+    #         return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No better hex"}
+    #     moved = self.move_unit(unit, best_hex[0], best_hex[1])
+    #     return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
 
-    def flank_left(self, unit_name: str, destination: Tuple[int, int]) -> dict:
-        """Flank left toward a destination by biasing the path to the left of the main approach."""
-        unit = self._find_unit_by_name(unit_name)
-        if not unit:
-            return {"ok": False, "error": "Unit not found"}
-        dest = (int(destination[0]), int(destination[1]))
-        # determine forward direction as neighbor reducing distance to destination most
-        dirs = self._direction_offsets(unit.y)
-        best_dir = 0
-        best_reduction = -1
-        curd = self._hex_distance(unit.x, unit.y, dest[0], dest[1])
-        for i, (dx, dy) in enumerate(dirs):
-            nx, ny = unit.x + dx, unit.y + dy
-            if not (0 <= nx < self.width and 0 <= ny < self.height):
-                continue
-            nd = self._hex_distance(nx, ny, dest[0], dest[1])
-            red = curd - nd
-            if nd < curd and red > best_reduction and self.grid[ny][nx].unit is None:
-                best_reduction = red
-                best_dir = i
-        left_dir = (best_dir - 1) % 6
-        desired = self._desired_along_direction(unit.x, unit.y, left_dir, 1)
-        best = self._best_reachable_toward(unit, desired)
-        if not best:
-            # fallback toward destination normally
-            best = self._best_reachable_toward(unit, dest)
-            if not best:
-                return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No flank path"}
-        moved = self.move_unit(unit, best[0], best[1])
-        return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+    # def flank_left(self, unit_name: str, destination: Tuple[int, int]) -> dict:
+    #     """Flank left toward a destination by biasing the path to the left of the main approach."""
+    #     unit = self._find_unit_by_name(unit_name)
+    #     if not unit:
+    #         return {"ok": False, "error": "Unit not found"}
+    #     dest = (int(destination[0]), int(destination[1]))
+    #     # determine forward direction as neighbor reducing distance to destination most
+    #     dirs = self._direction_offsets(unit.y)
+    #     best_dir = 0
+    #     best_reduction = -1
+    #     curd = self._hex_distance(unit.x, unit.y, dest[0], dest[1])
+    #     for i, (dx, dy) in enumerate(dirs):
+    #         nx, ny = unit.x + dx, unit.y + dy
+    #         if not (0 <= nx < self.width and 0 <= ny < self.height):
+    #             continue
+    #         nd = self._hex_distance(nx, ny, dest[0], dest[1])
+    #         red = curd - nd
+    #         if nd < curd and red > best_reduction and self.grid[ny][nx].unit is None:
+    #             best_reduction = red
+    #             best_dir = i
+    #     left_dir = (best_dir - 1) % 6
+    #     desired = self._desired_along_direction(unit.x, unit.y, left_dir, 1)
+    #     best = self._best_reachable_toward(unit, desired)
+    #     if not best:
+    #         # fallback toward destination normally
+    #         best = self._best_reachable_toward(unit, dest)
+    #         if not best:
+    #             return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No flank path"}
+    #     moved = self.move_unit(unit, best[0], best[1])
+    #     return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
 
-    def flank_right(self, unit_name: str, destination: Tuple[int, int]) -> dict:
-        """Flank right toward a destination by biasing the path to the right of the main approach."""
-        unit = self._find_unit_by_name(unit_name)
-        if not unit:
-            return {"ok": False, "error": "Unit not found"}
-        dest = (int(destination[0]), int(destination[1]))
-        dirs = self._direction_offsets(unit.y)
-        best_dir = 0
-        best_reduction = -1
-        curd = self._hex_distance(unit.x, unit.y, dest[0], dest[1])
-        for i, (dx, dy) in enumerate(dirs):
-            nx, ny = unit.x + dx, unit.y + dy
-            if not (0 <= nx < self.width and 0 <= ny < self.height):
-                continue
-            nd = self._hex_distance(nx, ny, dest[0], dest[1])
-            red = curd - nd
-            if nd < curd and red > best_reduction and self.grid[ny][nx].unit is None:
-                best_reduction = red
-                best_dir = i
-        right_dir = (best_dir + 1) % 6
-        desired = self._desired_along_direction(unit.x, unit.y, right_dir, 1)
-        best = self._best_reachable_toward(unit, desired)
-        if not best:
-            best = self._best_reachable_toward(unit, dest)
-            if not best:
-                return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No flank path"}
-        moved = self.move_unit(unit, best[0], best[1])
-        return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+    # def flank_right(self, unit_name: str, destination: Tuple[int, int]) -> dict:
+    #     """Flank right toward a destination by biasing the path to the right of the main approach."""
+    #     unit = self._find_unit_by_name(unit_name)
+    #     if not unit:
+    #         return {"ok": False, "error": "Unit not found"}
+    #     dest = (int(destination[0]), int(destination[1]))
+    #     dirs = self._direction_offsets(unit.y)
+    #     best_dir = 0
+    #     best_reduction = -1
+    #     curd = self._hex_distance(unit.x, unit.y, dest[0], dest[1])
+    #     for i, (dx, dy) in enumerate(dirs):
+    #         nx, ny = unit.x + dx, unit.y + dy
+    #         if not (0 <= nx < self.width and 0 <= ny < self.height):
+    #             continue
+    #         nd = self._hex_distance(nx, ny, dest[0], dest[1])
+    #         red = curd - nd
+    #         if nd < curd and red > best_reduction and self.grid[ny][nx].unit is None:
+    #             best_reduction = red
+    #             best_dir = i
+    #     right_dir = (best_dir + 1) % 6
+    #     desired = self._desired_along_direction(unit.x, unit.y, right_dir, 1)
+    #     best = self._best_reachable_toward(unit, desired)
+    #     if not best:
+    #         best = self._best_reachable_toward(unit, dest)
+    #         if not best:
+    #             return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No flank path"}
+    #     moved = self.move_unit(unit, best[0], best[1])
+    #     return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
 
-    def hold(self, unit_name: str, destination: Tuple[int, int]) -> dict:
-        """Order the unit to hold position (no movement). Destination is accepted but not used."""
-        unit = self._find_unit_by_name(unit_name)
-        if not unit:
-            return {"ok": False, "error": "Unit not found"}
-        return {"ok": True, "unit": unit.name, "position": [unit.x, unit.y]}
+    # def hold(self, unit_name: str, destination: Tuple[int, int]) -> dict:
+    #     """Order the unit to hold position (no movement). Destination is accepted but not used."""
+    #     unit = self._find_unit_by_name(unit_name)
+    #     if not unit:
+    #         return {"ok": False, "error": "Unit not found"}
+    #     return {"ok": True, "unit": unit.name, "position": [unit.x, unit.y]}
 
     def march(self, unit_name: str, destination: Tuple[int, int]) -> dict:
         """Order the unit to march toward a destination (x, y)."""
@@ -533,15 +611,42 @@ class Map:
 
         # Name generation — 19th-century Italian terms
         roots = [
+            # Major Italian rivers
             "Adda", "Po", "Ticino", "Mincio", "Brenta", "Isonzo", "Adige", "Arno", "Liri",
             "Sesia", "Oglio", "Tanaro", "Taro", "Nera", "Volturno", "Piave", "Trebbia", "Chiese",
-            "Ofanto", "Bormida"
+            "Ofanto", "Bormida", "Scrivia", "Secchia", "Panaro", "Reno", "Tagliamento", "Livenza",
+            "Metauro", "Esino", "Pescara", "Sangro", "Trigno", "Biferno", "Fortore", "Sele",
+            "Bacchiglione", "Brembana", "Serio", "Lambro", "Olona", "Toce", "Dora", "Orco",
+            # Italian cities and towns from Napoleonic era
+            "Mantua", "Verona", "Brescia", "Bergamo", "Cremona", "Pavia", "Lodi", "Milan",
+            "Vicenza", "Padua", "Treviso", "Udine", "Piacenza", "Parma", "Modena", "Ferrara",
+            "Bologna", "Ravenna", "Rimini", "Pesaro", "Ancona", "Macerata", "Ascoli", "Teramo",
+            "Aquila", "Chieti", "Perugia", "Spoleto", "Terni", "Viterbo", "Rieti", "Frosinone",
+            "Latina", "Caserta", "Benevento", "Avellino", "Salerno", "Potenza", "Matera", "Foggia",
+            # Historical Italian regions and provinces
+            "Lombardy", "Venetia", "Piedmont", "Liguria", "Emilia", "Romagna", "Tuscany", "Umbria",
+            "Marche", "Abruzzo", "Molise", "Campania", "Apulia", "Basilicata", "Calabria"
         ]
         saints = [
             "San Marco", "San Pietro", "San Giorgio", "San Luca", "San Paolo", "Santa Maria",
-            "Sant'Anna", "San Michele", "San Carlo", "San Giovanni"
+            "Sant'Anna", "San Michele", "San Carlo", "San Giovanni", "San Giacomo", "San Matteo",
+            "San Filippo", "San Simone", "San Tommaso", "San Bartolomeo", "San Andrea", "San Stefano",
+            "Santa Lucia", "Santa Caterina", "Santa Teresa", "Sant'Antonio", "San Francesco",
+            "San Domenico", "San Bernardo", "San Giuseppe", "Santa Chiara", "Sant'Agostino",
+            "San Benedetto", "San Lorenzo", "San Martino", "San Nicola", "San Rocco", "San Sebastiano",
+            "Santa Monica", "Sant'Ambrogio", "San Gennaro", "San Vittore", "Santa Barbara",
+            "San Cristoforo", "San Donato", "San Fedele", "San Gregorio", "Sant'Eufemia",
+            "San Zeno", "San Biagio", "Sant'Eusebio", "San Protaso", "San Gervaso"
         ]
-        adjs = ["Grande", "Piccolo", "Alto", "Basso", "Lungo", "Nero", "Verde", "Rosso"]
+        adjs = [
+            # Italian adjectives - colors, sizes, qualities
+            "Grande", "Piccolo", "Alto", "Basso", "Lungo", "Corto", "Nero", "Verde", "Rosso",
+            "Bianco", "Azzurro", "Bruno", "Grigio", "Dorato", "Argento", "Chiaro", "Scuro",
+            "Nuovo", "Vecchio", "Primo", "Secondo", "Terzo", "Ultimo", "Centrale", "Orientale",
+            "Occidentale", "Settentrionale", "Meridionale", "Superiore", "Inferiore", "Esterno",
+            "Interno", "Maggiore", "Minore", "Estremo", "Medio", "Largo", "Stretto", "Profondo",
+            "Piano", "Ripido", "Dolce", "Aspro", "Fertile", "Arido", "Folto", "Rado"
+        ]
 
         used_names: Set[str] = set()
 
@@ -561,53 +666,207 @@ class Map:
         def name_hill() -> str:
             choice = random.randint(0, 2)
             if choice == 0:
-                return unique(f"Colle {random.choice(roots)}")
+                return unique(f"{random.choice(roots)} Hill")
             elif choice == 1:
-                return unique(f"Monti di {random.choice(saints)}")
+                return unique(f"{random.choice(saints)} Heights")
             else:
-                return unique(f"Alture {random.choice(adjs)}")
+                return unique(f"{random.choice(adjs)} Ridge")
 
         def name_forest() -> str:
             choice = random.randint(0, 2)
             if choice == 0:
-                return unique(f"Bosco di {random.choice(saints)}")
+                return unique(f"{random.choice(saints)} Wood")
             elif choice == 1:
-                return unique(f"Selva {random.choice(roots)}")
+                return unique(f"{random.choice(roots)} Forest")
             else:
-                return unique(f"Foresta {random.choice(adjs)}")
+                return unique(f"{random.choice(adjs)} Thicket")
 
         def name_river() -> str:
             if random.random() < 0.5:
-                return unique(f"Fiume {random.choice(roots)}")
+                return unique(f"{random.choice(roots)} River")
             else:
-                return unique(f"Torrente {random.choice(roots)}")
+                return unique(f"{random.choice(roots)} Stream")
 
         def name_valley() -> str:
             choice = random.randint(0, 2)
             if choice == 0:
-                return unique(f"Valle del {random.choice(roots)}")
+                return unique(f"{random.choice(roots)} Valley")
             elif choice == 1:
-                return unique(f"Val di {random.choice(saints)}")
+                return unique(f"{random.choice(saints)} Vale")
             else:
-                return unique(f"Piana {random.choice(adjs)}")
+                return unique(f"{random.choice(adjs)} Plain")
 
-        # Apply names to clusters by populating each hex.features
+        # Helper to subdivide large clusters into sub-features
+        def subdivide_cluster(cluster: List[Tuple[int, int]], min_subcluster_size: int = 2) -> List[List[Tuple[int, int]]]:
+            """Break a large cluster into smaller sub-clusters using spatial proximity.
+            Aims to cover most/all hexes with sub-features."""
+            if len(cluster) < min_subcluster_size:
+                return []  # Too small to subdivide
+            
+            subclusters = []
+            remaining = set(cluster)
+            
+            # Limit iterations to prevent infinite loops
+            max_iterations = len(cluster) * 2
+            iteration_count = 0
+            
+            # Greedy clustering: pick seeds and grow sub-clusters
+            # Keep going until we've covered almost all tiles
+            while len(remaining) >= min_subcluster_size and iteration_count < max_iterations:
+                iteration_count += 1
+                
+                # Pick a random seed from remaining
+                seed = random.choice(list(remaining))
+                subcluster = [seed]
+                remaining.remove(seed)
+                
+                # Create small sub-features (2-3 hexes) to maximize coverage
+                target_size = random.randint(2, 3)
+                
+                # BFS-like growth but stay compact
+                frontier = [seed]
+                visited = {seed}
+                growth_iterations = 0
+                max_growth = target_size * 4
+                
+                while len(subcluster) < target_size and frontier and growth_iterations < max_growth:
+                    growth_iterations += 1
+                    
+                    if not frontier:
+                        break
+                        
+                    current = frontier.pop(0)
+                    neighbors = list(self.get_neighbors(current[0], current[1]))
+                    random.shuffle(neighbors)
+                    
+                    for nx, ny in neighbors:
+                        if (nx, ny) in remaining and (nx, ny) not in visited:
+                            visited.add((nx, ny))
+                            if random.random() < 0.75:  # High probability for maximum coverage
+                                subcluster.append((nx, ny))
+                                remaining.remove((nx, ny))
+                                frontier.append((nx, ny))
+                                if len(subcluster) >= target_size:
+                                    break
+                
+                if len(subcluster) >= min_subcluster_size:
+                    subclusters.append(subcluster)
+                elif len(subcluster) == 1 and len(remaining) < min_subcluster_size:
+                    # For isolated single hexes at the end, create a single-hex sub-feature
+                    subclusters.append(subcluster)
+            
+            # Handle any remaining isolated hexes by adding them as single-hex sub-features
+            for hex_pos in remaining:
+                subclusters.append([hex_pos])
+            
+            return subclusters
+
+        # Helper to generate sub-feature names
+        def name_hill_sub() -> str:
+            """Generate sub-feature names for hills (individual peaks, crests, etc.)"""
+            choice = random.randint(0, 3)
+            if choice == 0:
+                return unique(f"{random.choice(adjs)} Rise")
+            elif choice == 1:
+                return unique(f"{random.choice(roots)} Peak")
+            elif choice == 2:
+                return unique(f"{random.choice(saints)} Crest")
+            else:
+                return unique(f"{random.choice(roots)} Knoll")
+
+        def name_forest_sub() -> str:
+            """Generate sub-feature names for forests (groves, thickets, etc.)"""
+            choice = random.randint(0, 3)
+            if choice == 0:
+                return unique(f"{random.choice(adjs)} Grove")
+            elif choice == 1:
+                return unique(f"{random.choice(saints)} Copse")
+            elif choice == 2:
+                return unique(f"{random.choice(roots)} Glade")
+            else:
+                return unique(f"{random.choice(adjs)} Stand")
+
+        def name_river_sub() -> str:
+            """Generate sub-feature names for rivers (bends, fords, etc.)"""
+            choice = random.randint(0, 3)
+            if choice == 0:
+                return unique(f"{random.choice(roots)} Bend")
+            elif choice == 1:
+                return unique(f"{random.choice(adjs)} Ford")
+            elif choice == 2:
+                return unique(f"{random.choice(saints)} Rapids")
+            else:
+                return unique(f"{random.choice(roots)} Meander")
+
+        def name_valley_sub() -> str:
+            """Generate sub-feature names for valleys (meadows, flats, etc.)"""
+            choice = random.randint(0, 3)
+            if choice == 0:
+                return unique(f"{random.choice(adjs)} Meadow")
+            elif choice == 1:
+                return unique(f"{random.choice(saints)} Field")
+            elif choice == 2:
+                return unique(f"{random.choice(roots)} Flat")
+            else:
+                return unique(f"{random.choice(adjs)} Dell")
+
+        # Apply names to clusters by populating each hex.features with both major and sub-feature names
         for cluster in hill_clusters:
-            label = name_hill()
+            major_label = name_hill()
+            # All hexes get the major feature name
             for x, y in cluster:
-                self.grid[y][x].features.append(label)
+                self.grid[y][x].features.append(major_label)
+            
+            # Subdivide into sub-features for nearly all clusters (threshold = 3)
+            if len(cluster) >= 3:
+                subclusters = subdivide_cluster(cluster, min_subcluster_size=1)
+                for subcluster in subclusters:
+                    sub_label = name_hill_sub()
+                    for x, y in subcluster:
+                        self.grid[y][x].features.append(sub_label)
 
         for cluster in forest_clusters:
-            label = name_forest()
+            major_label = name_forest()
             for x, y in cluster:
-                self.grid[y][x].features.append(label)
+                self.grid[y][x].features.append(major_label)
+            
+            # Subdivide into groves/thickets for nearly all clusters (threshold = 3)
+            if len(cluster) >= 3:
+                subclusters = subdivide_cluster(cluster, min_subcluster_size=1)
+                for subcluster in subclusters:
+                    sub_label = name_forest_sub()
+                    for x, y in subcluster:
+                        self.grid[y][x].features.append(sub_label)
 
         for cluster in river_clusters:
-            label = name_river()
+            major_label = name_river()
             for x, y in cluster:
-                self.grid[y][x].features.append(label)
+                self.grid[y][x].features.append(major_label)
+            
+            # Subdivide into bends/sections for nearly all rivers (threshold = 2 since rivers are linear)
+            if len(cluster) >= 2:
+                subclusters = subdivide_cluster(cluster, min_subcluster_size=1)
+                for subcluster in subclusters:
+                    sub_label = name_river_sub()
+                    for x, y in subcluster:
+                        self.grid[y][x].features.append(sub_label)
 
         for cluster in valley_clusters:
-            label = name_valley()
+            major_label = name_valley()
             for x, y in cluster:
-                self.grid[y][x].features.append(label)
+                self.grid[y][x].features.append(major_label)
+            
+            # Subdivide into meadows/fields for nearly all valleys (threshold = 3)
+            if len(cluster) >= 3:
+                subclusters = subdivide_cluster(cluster, min_subcluster_size=1)
+                for subcluster in subclusters:
+                    sub_label = name_valley_sub()
+                    for x, y in subcluster:
+                        self.grid[y][x].features.append(sub_label)
+            # Subdivide into meadows/fields if large enough (lowered threshold)
+            if len(cluster) >= 4:
+                subclusters = subdivide_cluster(cluster, min_subcluster_size=2)
+                for subcluster in subclusters:
+                    sub_label = name_valley_sub()
+                    for x, y in subcluster:
+                        self.grid[y][x].features.append(sub_label)

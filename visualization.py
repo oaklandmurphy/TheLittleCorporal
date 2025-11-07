@@ -142,12 +142,39 @@ def draw_infantry_symbol(unit: Unit):
     glLineWidth(1)  # Reset to default
 
 
+def draw_combat_indicator(x1, y1, x2, y2):
+    """Draw a red crossed rifles symbol at the midpoint between two engaged units."""
+    cx1, cy1 = hex_to_pixel(x1, y1)
+    cx2, cy2 = hex_to_pixel(x2, y2)
+    
+    # Midpoint between the two hexes
+    mid_x = (cx1 + cx2) / 2
+    mid_y = (cy1 + cy2) / 2
+    
+    # Size of the combat indicator
+    size = HEX_SIZE * 0.4
+    
+    # Draw red crossed rifles
+    glColor3f(0.9, 0.1, 0.1)  # Red color
+    glLineWidth(4)
+    glBegin(GL_LINES)
+    # First rifle (diagonal from bottom-left to top-right)
+    glVertex2f(mid_x - size/2, mid_y + size/2)
+    glVertex2f(mid_x + size/2, mid_y - size/2)
+    # Second rifle (diagonal from top-left to bottom-right)
+    glVertex2f(mid_x - size/2, mid_y - size/2)
+    glVertex2f(mid_x + size/2, mid_y + size/2)
+    glEnd()
+    glLineWidth(1)  # Reset to default
+
+
 class Visualization:
     def __init__(self, game_map: Map):
         self.game_map = game_map
         self.font = pygame.font.SysFont("Arial", 18)
+        self.status_font = pygame.font.SysFont("Arial", 24, bold=True)
 
-    def render(self, hover_info=None):
+    def render(self, hover_info=None, llm_processing=False):
         glClearColor(0.92, 0.92, 0.92, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         # Draw hexes
@@ -171,23 +198,63 @@ class Visualization:
                         draw_infantry_symbol(hex.unit)
                     else:
                         draw_unit_square(hex.unit)  # fallback for other unit types
+        
+        # Draw combat indicators for engaged units
+        self.draw_combat_indicators()
+        
         # Draw overlay info
         if hover_info:
             self.render_hover_info(hover_info)
+        
+        # Draw LLM processing indicator
+        if llm_processing:
+            self.render_llm_processing_indicator()
 
     def get_hex_at_pixel(self, px, py):
-        # Improved odd-q offset hex picking
+        """
+        Convert pixel coordinates to hex coordinates using proper hexagonal geometry.
+        This accounts for the actual shape of hexagons, not just rectangular approximation.
+        """
         px_adj = px - 60
         py_adj = py - 40
-        if px_adj < 0 or py_adj < 0:
-            return None
-        col = int(round(px_adj / HEX_HORIZ))
-        # odd columns are shifted down by HEX_HEIGHT/2
-        y_offset = (HEX_VERT / 2) if (col % 2) else 0
-        row = int(round((py_adj - y_offset) / HEX_VERT))
-        if col < 0 or row < 0:
-            return None
-        return (col, row)
+        
+        # Rough estimate of which hex we might be in
+        col_estimate = px_adj / HEX_HORIZ
+        
+        # Check candidate hexes (the estimated one and neighbors)
+        # We need to check multiple candidates because edges overlap
+        col_candidates = [int(math.floor(col_estimate)), int(math.ceil(col_estimate))]
+        
+        best_hex = None
+        best_dist = float('inf')
+        
+        for col in col_candidates:
+            if col < 0 or col >= self.game_map.width:
+                continue
+                
+            # Calculate y offset for odd columns
+            y_offset = (HEX_VERT / 2) if (col % 2) else 0
+            row_estimate = (py_adj - y_offset) / HEX_VERT
+            
+            # Check multiple row candidates
+            row_candidates = [int(math.floor(row_estimate)), int(math.ceil(row_estimate))]
+            
+            for row in row_candidates:
+                if row < 0 or row >= self.game_map.height:
+                    continue
+                
+                # Get the center of this hex
+                hex_cx, hex_cy = hex_to_pixel(col, row)
+                
+                # Calculate distance from mouse to hex center
+                dist = math.sqrt((px - hex_cx)**2 + (py - hex_cy)**2)
+                
+                # If this is the closest hex center so far, and it's within range
+                if dist < best_dist and dist < HEX_SIZE:
+                    best_dist = dist
+                    best_hex = (col, row)
+        
+        return best_hex
 
     def get_hover_info(self, mouse_pos):
         """Return a list of lines describing the hovered hex/unit, including feature names and coordinates."""
@@ -261,3 +328,53 @@ class Visualization:
             text_data = pygame.image.tostring(text_surface, "RGBA", True)
             glWindowPos2d(x, y + i * (self.font.get_height() + line_gap))
             glDrawPixels(text_surface.get_width(), text_surface.get_height(), GL_RGBA, GL_UNSIGNED_BYTE, text_data)
+
+    def render_llm_processing_indicator(self):
+        """Draw a processing indicator to show LLM is working."""
+        import time
+        # Animated dots
+        dots = int(time.time() * 2) % 4
+        status_text = "LLM Processing" + "." * dots
+        
+        text_surface = self.status_font.render(status_text, True, (255, 100, 0), (50, 50, 50))
+        text_data = pygame.image.tostring(text_surface, "RGBA", True)
+        
+        # Position in top-right corner
+        x = WINDOW_W - text_surface.get_width() - 20
+        y = 20
+        
+        glWindowPos2d(x, y)
+        glDrawPixels(text_surface.get_width(), text_surface.get_height(), GL_RGBA, GL_UNSIGNED_BYTE, text_data)
+
+    def draw_combat_indicators(self):
+        """Draw red crossed rifles symbols between engaged units."""
+        processed_pairs = set()
+        
+        for row in range(self.game_map.height):
+            for col in range(self.game_map.width):
+                hex = self.game_map.get_hex(col, row)
+                if not hex or not hex.unit or not hex.unit.engaged:
+                    continue
+                
+                unit = hex.unit
+                
+                # Check for adjacent engaged enemies
+                for nx, ny in self.game_map.get_neighbors(col, row):
+                    if not (0 <= nx < self.game_map.width and 0 <= ny < self.game_map.height):
+                        continue
+                    
+                    neighbor_hex = self.game_map.get_hex(nx, ny)
+                    if not neighbor_hex or not neighbor_hex.unit:
+                        continue
+                    
+                    enemy = neighbor_hex.unit
+                    
+                    # Check if this is an engaged enemy pair
+                    if enemy.faction != unit.faction and enemy.engaged:
+                        # Create a sorted tuple to avoid drawing the same pair twice
+                        pair = tuple(sorted([(col, row), (nx, ny)]))
+                        
+                        if pair not in processed_pairs:
+                            processed_pairs.add(pair)
+                            draw_combat_indicator(col, row, nx, ny)
+

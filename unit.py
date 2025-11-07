@@ -12,6 +12,7 @@ class Unit(ABC):
 		self.corps = corps
 		self.mobility = mobility  # integer: max distance moved in a turn
 		self.remaining_mobility = mobility
+		self.formation = "column"  # can be "column", "entrenched", "line"
 		self.size = size          # 1–12: number of men abstracted
 		self.quality = quality    # 1–5: training & experience
 		self.morale = morale      # 0–10: fighting spirit

@@ -3,14 +3,10 @@ from terrain import FIELDS, HILL, RIVER, FOREST
 from unit import Infantry
 from turnmanager import TurnManager
 from visualization import Visualization, WINDOW_W, WINDOW_H
-from reporting import ReportGenerator
-import threading
-import queue
 from general import General
 from staff_officer import StaffOfficer
 import os
 import pygame
-import sys
 import json
 from OpenGL.GLU import gluOrtho2D
 
@@ -84,15 +80,21 @@ def create_demo_map() -> Map:
 
 	# Generate features
 	carve_river()
-	# a couple of ridges in center/north/south bands
-	add_hill_ridge(3, 2, length=5, diag=True)
-	add_hill_ridge(4, 5, length=6, diag=False)
-	add_hill_ridge(6, 7, length=4, diag=True)
-
-	# several forest clusters
-	add_forest_cluster(8, 2, target=8)
-	add_forest_cluster(9, 5, target=10)
-	add_forest_cluster(5, 6, target=7)
+	
+	# Multiple hill ridges with varied orientations and positions
+	add_hill_ridge(3, 1, length=4, diag=True)   # Northern ridge
+	add_hill_ridge(4, 3, length=6, diag=False)  # Central ridge (horizontal)
+	add_hill_ridge(5, 5, length=5, diag=True)   # South-central ridge
+	add_hill_ridge(6, 7, length=4, diag=False)  # Southern ridge
+	add_hill_ridge(8, 1, length=3, diag=True)   # Eastern high ground
+	
+	# Varied forest clusters - different sizes and locations
+	add_forest_cluster(7, 2, target=6)   # Small northern woods
+	add_forest_cluster(9, 3, target=12)  # Large eastern forest
+	add_forest_cluster(5, 4, target=5)   # Small central copse
+	add_forest_cluster(10, 6, target=9)  # Medium southeastern woods
+	add_forest_cluster(4, 7, target=7)   # Southern forest patch
+	add_forest_cluster(8, 8, target=4)   # Small southern woods
 
 	# place units - expanded order of battle
 	# All Blue units share the same division/corps (Napoleon's 1st Corps)
@@ -125,14 +127,15 @@ def create_demo_map() -> Map:
 	game_map.place_unit(b5, 4, 4)
 
 	# Place Yellow units (right/center)
-	game_map.place_unit(r1, 8, 3)
+	game_map.place_unit(r1, 5, 3)
 	game_map.place_unit(r2, 9, 3)
 	game_map.place_unit(r3, 8, 5)
 	game_map.place_unit(r4, 9, 5)
 	game_map.place_unit(r5, 7, 4)
 
-	# label features and print report
+	# label features
 	game_map.label_terrain_features(seed=123)
+	
 	return game_map
 
 def main():
@@ -145,193 +148,56 @@ def main():
 	factions = ["French", "Austrian"]
 	turn_manager = TurnManager(game_map, factions)
 	vis = Visualization(game_map)
-	running = True
-
-	print("\n--- Welcome to The Little Corporal Napoleonic Wargame Demo ---\n")
-	print("[ABSTRACT MAP DESCRIPTION]: \n")
-	print(ReportGenerator(game_map).generate_general_summary())
-	print("\n----------------------------------------\n")
-	print("[PRECISE MAP DESCRIPTION]: \n")
-	print(ReportGenerator(game_map).generate_so_summary())
 
 	# Load general presets from JSON
 	with open("general_presets.json", "r", encoding="utf-8") as f:
 		general_presets = json.load(f)
 
-	# Create generals for each faction
-	generals = {
-		"French": General(
-			unit_list=game_map.get_units_by_faction("French"), 
-			faction="French", 
-			identity_prompt=general_presets["marmont_preset"]
-		),
-		"Austrian": General(
-			unit_list=game_map.get_units_by_faction("Austrian"), 
-			faction="Austrian", 
-			identity_prompt=general_presets["schwarzenberg_preset"]
-		)
-	}
+	blue_general_preset = general_presets["marmont_preset"]
+	yellow_general_preset = general_presets["schwarzenberg_preset"]
 
+	# set up remote host
+	# use None for local ollama
+	# host = "http://67.181.163.41:42069"
+	# max_retries = 9
+	# num_threads = None
+	# num_ctx = None
+	
+	host = None
+	max_retries = 9
+	num_threads = 4
+	num_ctx = 4096
+
+	# specify model
+	model = "llama3.2:3b"
+	# model = "llama3.1:8b"
+	# model = "gpt-oss:20b"
+
+	# Alternate turns between French and Austrian
+	faction_names = ["French", "Austrian"]
+
+	# Setup generals
+	generals = {
+		"French": General(unit_list=game_map.get_units_by_faction("French"), faction="French", model=model, identity_prompt=blue_general_preset, ollama_host=host), 
+		"Austrian": General(unit_list=game_map.get_units_by_faction("Austrian"), faction="Austrian", model=model, identity_prompt=yellow_general_preset, ollama_host=host)
+	}
+	
 	# Staff officers that translate orders into concrete moves via tools
 	staff_officers = {
-		faction: StaffOfficer(
-			name=generals[faction].name, 
-			unit_list=game_map.get_units_by_faction(faction), 
-			game_map=game_map
-		)
-		for faction in factions
+		"French": StaffOfficer(name=generals["French"].name, unit_list=game_map.get_units_by_faction("French"), game_map=game_map, model=model, ollama_host=host),
+		"Austrian": StaffOfficer(name=generals["Austrian"].name, unit_list=game_map.get_units_by_faction("Austrian"), game_map=game_map, model=model, ollama_host=host),
 	}
 
-	prompt_queue = queue.Queue()
-	result_queue = queue.Queue()  # Queue for LLM results
-	# Event to gate when input is allowed to avoid prompting before model output
-	input_allowed = threading.Event()
-	input_allowed.set()  # allow the very first prompt
-	processing_llm = threading.Event()  # Track when LLM is processing
-	
-	# Alternate turns between factions
-	current_faction_index = 0
-
-	def input_thread():
-		while running:
-			# Wait until the main loop signals that we're ready to accept input
-			input_allowed.wait()
-			if not running:
-				break
-			try:
-				# Get current general info for the prompt
-				faction = factions[current_faction_index]
-				general = generals[faction]
-				prompt = input(f"\nType your orders for {general.name} ({faction}) (or 'quit' to exit): ")
-				prompt_queue.put(prompt)
-				# Prevent immediately re-prompting until the main loop finishes processing
-				input_allowed.clear()
-			except EOFError:
-				break
-	
-	t = threading.Thread(target=input_thread, daemon=True)
-	t.start()
-
-	while running:
-		mouse_pos = pygame.mouse.get_pos()
-		for event in pygame.event.get():
-			if event.type == pygame.QUIT:
-				running = False
-			elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-				running = False
-
-		# Only advance turn when player enters a prompt
-		if not prompt_queue.empty():
-			player_prompt = prompt_queue.get()
-			if player_prompt.strip().lower() == "quit":
-				running = False
-				# Unblock input thread if it's waiting
-				input_allowed.set()
-				continue
-
-			# Determine which general's turn it is
-			current_faction = factions[current_faction_index]
-			general = generals[current_faction]
-			print(f"\n[{current_faction} General's Turn]")
-
-			processing_llm.set()  # Mark that we're processing
-			print("\n[Thinking...")
-
-			general_map_summary = ReportGenerator(game_map).generate_general_summary()
-			
-			# Store state for async callback
-			class ProcessingState:
-				def __init__(self):
-					self.general_response = None
-					self.staff_result = None
-			
-			state = ProcessingState()
-			
-			# Async callback for general's response
-			def on_general_response(response):
-				state.general_response = response
-				print(f"\n[{current_faction} General's Orders]:\n" + response)
-				print("\n[Staff Officer processing orders...]")
-				
-				# Now call staff officer asynchronously
-				so = staff_officers[current_faction]
-				so_map_summary = ReportGenerator(game_map).generate_general_summary()
-				
-				def on_staff_result(applied):
-					state.staff_result = applied
-					result_queue.put({"faction": current_faction, "applied": applied})
-				
-				so.process_orders(response, map_summary=so_map_summary, faction=current_faction, callback=on_staff_result)
-			
-			# Start the async chain
-			general.get_instructions(player_instructions=player_prompt, map_summary=general_map_summary, callback=on_general_response)
-		
-		# Check for LLM results
-		if not result_queue.empty():
-			result = result_queue.get()
-			current_faction = result["faction"]
-			applied = result["applied"]
-			
-			try:
-				if applied.get("ok"):
-					moves = applied.get("applied", [])
-					validation = applied.get("validation", {})
-					if moves:
-						print("\n[Staff Officer Applied Moves]")
-						for m in moves:
-							print(f"- {m.get('tool')} {m.get('args')} -> {m.get('result')}")
-					print(f"\n[Validation] All {len(moves)} units received orders.")
-				else:
-					# Validation failed after all retries
-					print(f"\n[Staff Officer ERROR] {applied.get('error')}")
-					validation = applied.get("validation", {})
-					if validation:
-						print(f"[Validation Details]")
-						if validation.get("missing"):
-							print(f"  Missing orders for: {', '.join(validation['missing'])}")
-						if validation.get("duplicates"):
-							print(f"  Duplicate orders for: {', '.join(validation['duplicates'])}")
-						print(f"  Unit coverage: {validation.get('unit_coverage', {})}")
-					print("[Turn skipped - validation failed after retries]")
-					# Don't advance turn or run turn_manager when validation fails
-					processing_llm.clear()
-					if running:
-						input_allowed.set()
-					continue
-			except Exception as e:
-				print(f"[Staff Officer Error] {e}")
-				processing_llm.clear()
-				if running:
-					input_allowed.set()
-				continue
-
-			turn_manager.run_turns(1)
-			report = ReportGenerator(game_map).generate_general_summary()
-			print(report)
-
-			# Alternate to the other faction for the next prompt
-			current_faction_index = (current_faction_index + 1) % 2
-
-			processing_llm.clear()
-			# Signal the input thread we're ready for the next user prompt
-			if running:
-				input_allowed.set()
-
-		hover_info = vis.get_hover_info(mouse_pos)
-		# Add processing indicator to hover_info if LLM is processing
-		if processing_llm.is_set():
-			if hover_info is None:
-				hover_info = {"processing": True}
-			elif isinstance(hover_info, list):
-				# Convert list to dict format with processing flag
-				hover_info = {"lines": hover_info, "processing": True}
-			else:
-				hover_info["processing"] = True
-		vis.render(hover_info)
-		pygame.display.flip()
-		clock.tick(30)
-	pygame.quit()
-	sys.exit()
+	# Run the game loop
+	turn_manager.run_game_loop(
+		vis=vis,
+		generals=generals,
+		staff_officers=staff_officers,
+		clock=clock,
+		max_retries=max_retries,
+		num_threads=num_threads,
+		num_ctx=num_ctx
+	)
 
 if __name__ == "__main__":
 	main()

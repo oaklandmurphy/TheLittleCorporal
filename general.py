@@ -4,11 +4,18 @@ import threading
 from typing import Optional, Callable
 
 class General:
-	def __init__(self, faction: str, identity_prompt, unit_list=None, model: str = "llama3.2:3b"):
+	def __init__(self, faction: str, identity_prompt, unit_list=None, model: str = "llama3.2:3b", ollama_host: str = None):
 		"""
 		llm_command: List[str] - The command to run the local LLM (e.g., ["ollama", "run", "mymodel"])
+		ollama_host: str - The Ollama API host URL (e.g., "http://localhost:11434")
 		"""
 		self.llm_command = ["ollama", "run", model]
+		self.model = model
+		self.ollama_host = ollama_host
+		if ollama_host:
+			self.client = ollama.Client(host=ollama_host)
+		else:
+			self.client = ollama
 		self.name = identity_prompt.get("name", "General")
 		self.description = identity_prompt.get("description", "")
 		self.faction = faction
@@ -46,12 +53,10 @@ class General:
 		system_prompt = (
 			f"You are {self.name}, do not break character under any circumstances.\n"
 			f"{self.description}\n"
-			"You command the following units:\n"
-			f"{self.unit_summary}\n"
 			"Given the following battlefield summary and orders from the user, respond with clear, concise orders for your troops.\n"
 			f"Battlefield Summary:\n{map_summary}\n"
 			"Your response must be in the form of a list of direct orders to each of your units and nothing else.\n"
-			"you should try to reference a location on the map or a diffferent unit when giving orders when possible, if you cannot specify a location or second unit, give a cardinal direction (N, S, E, W, NE, NW, SE, SW)."
+			"you should try to reference a location on the map when giving orders."
 		)
 
 		prompt = f"Your orders are: {player_instructions}\n"
@@ -81,8 +86,8 @@ class General:
 				"content": system_prompt
 			}
 			user_message = {"role": "user", "content": prompt}
-			response = ollama.chat(
-				model="llama3",
+			response = self.client.chat(
+				model=self.model,
 				messages=[system_message, user_message],
 				options={"num_thread": num_thread, "num_ctx": num_ctx}
 			)
