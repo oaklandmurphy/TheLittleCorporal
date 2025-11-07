@@ -158,12 +158,21 @@ def main():
 
 	# set up remote host
 	# use None for local ollama
-	# host = "25.0.75.161"
+	# host = "http://67.181.163.41:42069"
+	# max_retries = 9
+	# num_threads = None
+	# num_ctx = None
+	
 	host = None
+	max_retries = 9
+	num_threads = 4
+	num_ctx = 4096
 
 	# specify model
-	# model = "deepseek-r1:8b"
 	model = "llama3.2:3b"
+	# model = "llama3.1:8b"
+	# model = "gpt-oss:20b"
+	
 
 	blue_general = General(unit_list=game_map.get_units_by_faction("French"), faction="French", model=model, identity_prompt=blue_general_preset, ollama_host=host)
 	yellow_general = General(unit_list=game_map.get_units_by_faction("Austrian"), faction="Austrian", model=model, identity_prompt=yellow_general_preset, ollama_host=host)
@@ -229,7 +238,7 @@ def main():
 			# Staff officer executes the orders by calling movement tools
 			try:
 				so = staff_officers[current_faction]
-				applied = so.process_orders(general_response, map_summary=map_summary, faction=current_faction)
+				applied = so.process_orders(general_response, map_summary=map_summary, faction=current_faction, max_retries=max_retries, num_thread=num_threads, num_ctx=num_ctx)
 				if applied.get("ok"):
 					moves = applied.get("applied", [])
 					validation = applied.get("validation", {})

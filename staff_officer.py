@@ -20,7 +20,13 @@ class StaffOfficer:
 	"""
 
 	# Available movement commands
-	VALID_TOOLS = {"advance", "retreat", "flank_left", "flank_right", "hold", "march"}
+	VALID_TOOLS = {
+		# "advance", 
+		# "retreat", 
+		# "flank_left",
+		# "flank_right", 
+		# "hold", 
+		"march"}
 
 	def __init__(self, name: str, game_map: Map, unit_list=None, model: str = "llama3.2:3b", ollama_host: str = None):
 		"""
@@ -52,11 +58,11 @@ class StaffOfficer:
 	def tools(self) -> List[Dict[str, Any]]:
 		"""Define the movement tools available to the LLM."""
 		return [
-			self._tool_spec("advance", "move and try to attack the enemy unit nearest the destination (x,y) using pathfinding."),
-			self._tool_spec("retreat", "Retreat the named unit toward a fallback destination (x,y), preferring distance from enemy."),
-			self._tool_spec("flank_left", "Flank left toward a destination (x,y) by biasing the path left of the direct approach."),
-			self._tool_spec("flank_right", "Flank right toward a destination (x,y) by biasing the path right of the direct approach."),
-			self._tool_spec("hold", "Have the named unit hold. Destination is required for schema consistency but ignored."),
+			# self._tool_spec("advance", "move and try to attack the enemy unit nearest the destination (x,y) using pathfinding."),
+			# self._tool_spec("retreat", "Retreat the named unit toward a fallback destination (x,y), preferring distance from enemy."),
+			# self._tool_spec("flank_left", "Flank left toward a destination (x,y) by biasing the path left of the direct approach."),
+			# self._tool_spec("flank_right", "Flank right toward a destination (x,y) by biasing the path right of the direct approach."),
+			# self._tool_spec("hold", "Have the named unit hold. Destination is required for schema consistency but ignored."),
 			self._tool_spec("march", "March the unit directly toward a destination (x,y), use for fastest possible movement"),
 		]
 
@@ -70,14 +76,11 @@ class StaffOfficer:
 				"parameters": {
 					"type": "object",
 					"properties": {
-						"unit_name": {"type": "string"},
-						"destination": {
-							"type": "object",
-							"properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
-							"required": ["x", "y"]
-						}
+						"unit_name": {"type": "string", "description": "Name of the unit to move"},
+						"x": {"type": "integer", "description": "Destination x coordinate"},
+						"y": {"type": "integer", "description": "Destination y coordinate"}
 					},
-					"required": ["unit_name", "destination"],
+					"required": ["unit_name", "x", "y"],
 				},
 			},
 		}
@@ -296,9 +299,15 @@ class StaffOfficer:
 		if name not in self.VALID_TOOLS:
 			return {"ok": False, "error": f"Unknown tool: {name}"}
 		
-		dest = self._parse_destination(args.get("destination"))
-		if dest is None:
-			return {"ok": False, "error": "Invalid destination"}
+		# Check for x and y coordinates
+		if "x" not in args or "y" not in args:
+			return {"ok": False, "error": "Missing x or y coordinate"}
+		
+		try:
+			x = int(args["x"])
+			y = int(args["y"])
+		except (ValueError, TypeError):
+			return {"ok": False, "error": "Invalid x or y coordinate"}
 		
 		unit_name = args.get("unit_name")
 		if not unit_name:
@@ -360,19 +369,23 @@ class StaffOfficer:
 
 	def _execute_tool(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
 		"""Execute a single validated tool call on the map."""
-		dest = self._parse_destination(args.get("destination"))
-		if dest is None:
-			return {"ok": False, "error": "Invalid destination"}
+		# Extract x and y coordinates directly from args
+		try:
+			x = int(args["x"])
+			y = int(args["y"])
+			dest = (x, y)
+		except (KeyError, ValueError, TypeError):
+			return {"ok": False, "error": "Invalid coordinates"}
 		
 		unit_name = args.get("unit_name")
 		
 		# Dispatch to appropriate map method
 		tool_methods = {
-			"advance": self.map.advance,
-			"retreat": self.map.retreat,
-			"flank_left": self.map.flank_left,
-			"flank_right": self.map.flank_right,
-			"hold": self.map.hold,
+			# "advance": self.map.advance,
+			# "retreat": self.map.retreat,
+			# "flank_left": self.map.flank_left,
+			# "flank_right": self.map.flank_right,
+			# "hold": self.map.hold,
 			"march": self.map.march,
 		}
 		
@@ -396,6 +409,15 @@ class StaffOfficer:
 		
 		if isinstance(d, str):
 			import re
+			# Try to parse as JSON string first
+			try:
+				parsed = json.loads(d)
+				if isinstance(parsed, dict) and "x" in parsed and "y" in parsed:
+					return (int(parsed["x"]), int(parsed["y"]))
+			except (json.JSONDecodeError, ValueError, KeyError):
+				pass
+			
+			# Fall back to simple coordinate parsing
 			cleaned = d.strip().strip("()").strip()
 			match = re.match(r'^\s*(\d+)\s*,\s*(\d+)\s*$', cleaned)
 			if match:
@@ -426,9 +448,9 @@ class StaffOfficer:
 		
 		for i, call in enumerate(collected_calls, 1):
 			unit = call["args"].get("unit_name", "Unknown")
-			dest = call["args"].get("destination", {})
-			dest_str = f"({dest.get('x', '?')}, {dest.get('y', '?')})" if isinstance(dest, dict) else str(dest)
-			print(f"{i}. {call['tool']} - {unit} → {dest_str}")
+			x = call["args"].get("x", "?")
+			y = call["args"].get("y", "?")
+			print(f"{i}. {call['tool']} - {unit} → ({x}, {y})")
 		
 		print(f"{'='*60}\n")
 
