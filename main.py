@@ -188,6 +188,10 @@ def main():
 	input_allowed = threading.Event()
 	input_allowed.set()  # allow the very first prompt
 
+	# Queue for LLM processing results
+	llm_result_queue = queue.Queue()
+	llm_processing = threading.Event()  # Flag to indicate LLM is processing
+
 	def input_thread():
 		while running:
 			# Wait until the main loop signals that we're ready to accept input
@@ -204,6 +208,34 @@ def main():
 	t = threading.Thread(target=input_thread, daemon=True)
 	t.start()
 
+	def llm_processing_thread(player_prompt, current_faction, general, map_summary):
+		"""Run LLM calls in background thread to keep pygame responsive."""
+		try:
+			print(f"\n[{current_faction} General's Turn]")
+			
+			# Call the general's LLM
+			general_response = general.get_instructions(player_instructions=player_prompt, map_summary=map_summary)
+			print(f"\n[{current_faction} General's Orders]:\n" + general_response)
+
+			# Staff officer executes the orders by calling movement tools
+			so = staff_officers[current_faction]
+			applied = so.process_orders(general_response, map_summary=map_summary, faction=current_faction, max_retries=max_retries, num_thread=num_threads, num_ctx=num_ctx)
+			
+			llm_result_queue.put({
+				"success": True,
+				"applied": applied,
+				"current_faction": current_faction
+			})
+		except Exception as e:
+			print(f"[LLM Processing Error] {e}")
+			llm_result_queue.put({
+				"success": False,
+				"error": str(e),
+				"current_faction": current_faction
+			})
+		finally:
+			llm_processing.clear()
+
 	# Alternate turns between French and Austrian
 	current_faction_index = 0
 	generals = {"French": blue_general, "Austrian": yellow_general}
@@ -217,8 +249,8 @@ def main():
 			elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
 				running = False
 
-		# Only advance turn when player enters a prompt
-		if not prompt_queue.empty():
+		# Check if we have a new prompt to process
+		if not prompt_queue.empty() and not llm_processing.is_set():
 			player_prompt = prompt_queue.get()
 			if player_prompt.strip().lower() == "quit":
 				running = False
@@ -229,16 +261,23 @@ def main():
 			# Determine which general's turn it is
 			current_faction = faction_names[current_faction_index]
 			general = generals[current_faction]
-			print(f"\n[{current_faction} General's Turn]")
-
 			map_summary = ReportGenerator(game_map).generate_general_summary()
-			general_response = general.get_instructions(player_instructions=player_prompt, map_summary=map_summary)
-			print(f"\n[{current_faction} General's Orders]:\n" + general_response)
+			
+			# Start LLM processing in background thread
+			llm_processing.set()
+			llm_thread = threading.Thread(
+				target=llm_processing_thread, 
+				args=(player_prompt, current_faction, general, map_summary),
+				daemon=True
+			)
+			llm_thread.start()
 
-			# Staff officer executes the orders by calling movement tools
-			try:
-				so = staff_officers[current_faction]
-				applied = so.process_orders(general_response, map_summary=map_summary, faction=current_faction, max_retries=max_retries, num_thread=num_threads, num_ctx=num_ctx)
+		# Check if LLM processing has completed
+		if not llm_result_queue.empty():
+			result = llm_result_queue.get()
+			
+			if result["success"]:
+				applied = result["applied"]
 				if applied.get("ok"):
 					moves = applied.get("applied", [])
 					validation = applied.get("validation", {})
@@ -247,6 +286,14 @@ def main():
 						for m in moves:
 							print(f"- {m.get('tool')} {m.get('args')} -> {m.get('result')}")
 					print(f"\n[Validation] All {len(moves)} units received orders.")
+					
+					# Advance the game turn
+					turn_manager.run_turns(1)
+					report = ReportGenerator(game_map).generate_general_summary()
+					print(report)
+
+					# Alternate to the other faction for the next prompt
+					current_faction_index = (current_faction_index + 1) % 2
 				else:
 					# Validation failed after all retries
 					print(f"\n[Staff Officer ERROR] {applied.get('error')}")
@@ -259,29 +306,15 @@ def main():
 							print(f"  Duplicate orders for: {', '.join(validation['duplicates'])}")
 						print(f"  Unit coverage: {validation.get('unit_coverage', {})}")
 					print("[Turn skipped - validation failed after retries]")
-					# Don't advance turn or run turn_manager when validation fails
-					if running:
-						input_allowed.set()
-					continue
-			except Exception as e:
-				print(f"[Staff Officer Error] {e}")
-				if running:
-					input_allowed.set()
-				continue
-
-			turn_manager.run_turns(1)
-			report = ReportGenerator(game_map).generate_general_summary()
-			print(report)
-
-			# Alternate to the other faction for the next prompt
-			current_faction_index = (current_faction_index + 1) % 2
-
+			else:
+				print(f"[Staff Officer Error] {result.get('error', 'Unknown error')}")
+			
 			# Signal the input thread we're ready for the next user prompt
 			if running:
 				input_allowed.set()
 
 		hover_info = vis.get_hover_info(mouse_pos)
-		vis.render(hover_info)
+		vis.render(hover_info, llm_processing=llm_processing.is_set())
 		pygame.display.flip()
 		clock.tick(30)
 	pygame.quit()

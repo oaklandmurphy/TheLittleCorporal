@@ -146,8 +146,9 @@ class Visualization:
     def __init__(self, game_map: Map):
         self.game_map = game_map
         self.font = pygame.font.SysFont("Arial", 18)
+        self.status_font = pygame.font.SysFont("Arial", 24, bold=True)
 
-    def render(self, hover_info=None):
+    def render(self, hover_info=None, llm_processing=False):
         glClearColor(0.92, 0.92, 0.92, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         # Draw hexes
@@ -174,6 +175,10 @@ class Visualization:
         # Draw overlay info
         if hover_info:
             self.render_hover_info(hover_info)
+        
+        # Draw LLM processing indicator
+        if llm_processing:
+            self.render_llm_processing_indicator()
 
     def get_hex_at_pixel(self, px, py):
         # Improved odd-q offset hex picking
@@ -237,3 +242,20 @@ class Visualization:
             text_data = pygame.image.tostring(text_surface, "RGBA", True)
             glWindowPos2d(x, y + i * (self.font.get_height() + line_gap))
             glDrawPixels(text_surface.get_width(), text_surface.get_height(), GL_RGBA, GL_UNSIGNED_BYTE, text_data)
+
+    def render_llm_processing_indicator(self):
+        """Draw a processing indicator to show LLM is working."""
+        import time
+        # Animated dots
+        dots = int(time.time() * 2) % 4
+        status_text = "LLM Processing" + "." * dots
+        
+        text_surface = self.status_font.render(status_text, True, (255, 100, 0), (50, 50, 50))
+        text_data = pygame.image.tostring(text_surface, "RGBA", True)
+        
+        # Position in top-right corner
+        x = WINDOW_W - text_surface.get_width() - 20
+        y = 20
+        
+        glWindowPos2d(x, y)
+        glDrawPixels(text_surface.get_width(), text_surface.get_height(), GL_RGBA, GL_UNSIGNED_BYTE, text_data)
