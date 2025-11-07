@@ -177,10 +177,6 @@ class StaffOfficer:
 		return (
 			f"You are the staff officer to General {self.name}.\n"
 			f"Your job is to convert the general's written orders into concrete unit movements on a hex map.\n\n"
-			f"MAP COORDINATE SYSTEM:\n"
-			f"- x=0 is the western edge, increasing eastward\n"
-			f"- y=0 is the northern edge, increasing southward\n\n"
-			f"BATTLEFIELD SITUATION:\n"
 			f"{map_summary}\n\n"
 			f"YOUR UNITS ({num_units} total):\n"
 			f"{self.unit_summary}\n"

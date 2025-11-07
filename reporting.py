@@ -1,694 +1,497 @@
 """
 Battlefield Report Generator
 
-Generates natural language summaries of battlefield situations including:
-- Terrain features (rivers, hills, forests)  
-- Unit positions and deployments
-- Combat proximity and engagement status
+Generates tactical reports for LLM-based generals with:
+- Terrain features
+- Own unit positions with status
+- Enemy positions
+- Tactical situation assessment
 """
 
 from __future__ import annotations
 from collections import deque, defaultdict
 from dataclasses import dataclass
-from typing import List, Tuple, Dict, Optional, Set
+from typing import List, Tuple, Dict, Optional
 import math
 
-try:
-    from map import Map
-except Exception:
-    Map = object  # type: ignore
-
-
-# =====================================================
-# DATA STRUCTURES
-# =====================================================
 
 @dataclass
 class TerrainFeature:
     """Represents a contiguous area of the same terrain type."""
-    terrain_type: str  # e.g., "River", "Hill", "Forest"
-    tiles: List[Tuple[int, int]]  # All (x, y) coordinates
-    size: int  # Number of tiles
-    center: Tuple[float, float]  # Geometric center
-    bounds: Tuple[int, int, int, int]  # (min_x, min_y, max_x, max_y)
-    map_region: str  # e.g., "the northwest", "the center"
-    name: Optional[str] = None  # Optional proper name (e.g., "Shiloh Creek")
+    terrain_type: str
+    tiles: List[Tuple[int, int]]
+    size: int
+    center: Tuple[float, float]
+    bounds: Tuple[int, int, int, int]
+    map_region: str
+    name: Optional[str] = None
 
 
 @dataclass
 class UnitPosition:
     """Detailed information about a single unit's position."""
-    unit: object  # The unit object
+    unit: object
     name: str
     unit_type: str
     x: int
     y: int
     faction: str
-    map_region: str  # Cardinal direction phrase
-    nearest_feature: Optional[TerrainFeature] = None
-    distance_to_feature: Optional[float] = None
-
-
-@dataclass
-class Formation:
-    """A group of nearby units from the same faction."""
-    faction: str
-    units: List[UnitPosition]
-    center: Tuple[float, float]
     map_region: str
+    
+def generate_tactical_report(map, faction: str, unit_list: List = None) -> str:
+    """Generate tactical report for a specific general's units.
+    
+    Args:
+        map: The game map
+        faction: The faction name (for identifying enemies)
+        unit_list: List of units under this general's command. If None, includes all faction units.
+    """
+    # Analyze battlefield
+    features = _find_terrain_features(map)
+    major_features = _select_notable_features(map, features)
+    unit_positions = _locate_all_units(map)
 
+    # If unit_list is provided, filter to only those specific units
+    if unit_list is not None:
+        unit_ids = {id(unit) for unit in unit_list}
+        friendly_units = [u for u in unit_positions if id(u.unit) in unit_ids]
+        # Allied units are same faction but not under this general's command
+        allied_units = [u for u in unit_positions if u.faction == faction and id(u.unit) not in unit_ids]
+        # Enemy units are different faction
+        enemy_units = [u for u in unit_positions if u.faction != faction]
+    else:
+        # Fallback to all units of the faction
+        friendly_units = [u for u in unit_positions if u.faction == faction]
+        allied_units = []
+        enemy_units = [u for u in unit_positions if u.faction != faction]
+    
+    if not friendly_units:
+        return f"No units under command found on the battlefield."
+    
+    # Build structured report
+    lines = []
+    lines.append(f"=== TACTICAL REPORT FOR {faction.upper()} FORCES ===\n")
+
+    # Section 1: Terrain Overview
+    lines.append("TERRAIN FEATURES:\n"
+                f"- x=0 is the western edge, increasing eastward\n"
+			    f"- y=0 is the northern edge, increasing southward\n\n")
+    if major_features:
+        for feature in major_features:
+            terrain_desc = _describe_feature_concise(feature)
+            lines.append(f"  - {terrain_desc}")
+    else:
+        lines.append("  - Open terrain with no major features")
+    lines.append("")
+    
+    # Section 2: Own Forces (detailed, unit by unit)
+    lines.append(f"YOUR FORCES ({len(friendly_units)} units):")
+    for unit_pos in friendly_units:
+        lines.append(f"\n  [{unit_pos.name}]")
+        lines.append(f"    Type: {unit_pos.unit_type}")
+        
+        # Add unit attributes (size, quality, morale)
+        unit_status = _get_unit_attributes(unit_pos.unit)
+        lines.append(f"    Status: {unit_status}")
+        
+        lines.append(f"    Position: {_format_region(unit_pos.map_region)} (coordinates {unit_pos.x}, {unit_pos.y})")
+        
+        # Local terrain
+        local_terrain = _describe_local_terrain(unit_pos, major_features)
+        if local_terrain:
+            lines.append(f"    Terrain: {local_terrain}")
+        
+        # Nearby enemies
+        nearby_enemies = _find_nearby_units(unit_pos, enemy_units, max_distance=5.0)
+        if nearby_enemies:
+            lines.append(f"    Nearby enemies:")
+            for enemy, dist, direction in nearby_enemies:
+                lines.append(f"      - {enemy.name}: {dist:.1f} hexes {direction}")
+        else:
+            lines.append(f"    Nearby enemies: None within 5 hexes")
+        
+        # Key terrain features nearby
+        nearby_features = _find_nearby_features(unit_pos, major_features, max_distance=4.0)
+        if nearby_features:
+            lines.append(f"    Key terrain nearby:")
+            for feature, dist, direction in nearby_features:
+                feature_name = feature.name if feature.name else feature.terrain_type
+                lines.append(f"      - {feature_name}: {dist:.1f} hexes {direction}")
+    
+    lines.append("")
+    
+    # Section 3: Allied Forces (friendly faction, not under command)
+    if allied_units:
+        lines.append(f"ALLIED FORCES ({len(allied_units)} units, not under your command):")
+        by_region = defaultdict(list)
+        for ally in allied_units:
+            by_region[ally.map_region].append(ally)
+        
+        for region in sorted(by_region.keys()):
+            units = by_region[region]
+            lines.append(f"  {_format_region(region)}:")
+            for u in units:
+                lines.append(f"    - {u.name} ({u.unit_type})")
+        
+        lines.append("")
+    
+    # Section 4: Enemy Forces (summary with basic intel)
+    lines.append(f"ENEMY FORCES ({len(enemy_units)} units):")
+    if enemy_units:
+        by_region = defaultdict(list)
+        for enemy in enemy_units:
+            by_region[enemy.map_region].append(enemy)
+        
+        for region in sorted(by_region.keys()):
+            units = by_region[region]
+            lines.append(f"  {_format_region(region)}:")
+            for u in units:
+                size_desc = _get_size_label(getattr(u.unit, 'size', 5))
+                quality_desc = _get_quality_label(getattr(u.unit, 'quality', 3))
+                lines.append(f"    - {u.name}: {size_desc}, {quality_desc} force")
+    else:
+        lines.append("  - No enemy units detected")
+    
+    lines.append("")
+    
+    # Section 5: Tactical Situation Summary
+    lines.append("TACTICAL SITUATION:")
+    situation = _assess_tactical_situation(friendly_units, enemy_units, major_features)
+    for point in situation:
+        lines.append(f"  - {point}")
+    
+    return "\n".join(lines)
 
 # =====================================================
-# MAIN REPORT GENERATOR
+# TERRAIN ANALYSIS
 # =====================================================
 
-class ReportGenerator:
-    """Generates natural language battlefield reports."""
-    
-    def __init__(self, game_map):
-        self.map = game_map
-        self.width = game_map.width
-        self.height = game_map.height
-    
-    # =====================================================
-    # PUBLIC API
-    # =====================================================
-    
-    def generate_general_summary(self) -> str:
-        """Generate a complete battlefield report.
-        
-        Returns:
-            Natural language description of terrain and unit positions
-        """
-        # Analyze battlefield
-        features = self._find_terrain_features()
-        major_features = self._select_notable_features(features)
-        unit_positions = self._locate_all_units()
-        formations = self._group_into_formations(unit_positions)
-        
-        # Build report sections
-        sections = []
-        
-        # Section 1: Terrain overview
-        if major_features:
-            sections.append(self._describe_terrain(major_features))
-        
-        # Section 2: Unit deployments by faction
-        if formations:
-            sections.append(self._describe_deployments(formations, unit_positions))
-        
-        # Section 3: Combat proximity
-        if len({f.faction for f in formations}) > 1:
-            proximity = self._describe_proximity(formations)
-            if proximity:
-                sections.append(proximity)
-        
-        return " ".join(s.strip() for s in sections if s)
-    
-    # =====================================================
-    # TERRAIN ANALYSIS
-    # =====================================================
-    
-    def _find_terrain_features(self) -> List[TerrainFeature]:
-        """Identify all contiguous terrain features using flood fill."""
-        visited = [[False] * self.width for _ in range(self.height)]
-        features = []
-        
-        for y in range(self.height):
-            for x in range(self.width):
-                if visited[y][x]:
-                    continue
-                
-                terrain_type = self.map.grid[y][x].terrain.name
-                tiles = self._flood_fill(x, y, terrain_type, visited)
-                
-                if tiles:
-                    center = self._calculate_center(tiles)
-                    bounds = self._calculate_bounds(tiles)
-                    region = self._map_region_from_coords(center[0], center[1])
-                    name = self._extract_feature_name(tiles)
-                    
-                    features.append(TerrainFeature(
-                        terrain_type=terrain_type,
-                        tiles=tiles,
-                        size=len(tiles),
-                        center=center,
-                        bounds=bounds,
-                        map_region=region,
-                        name=name
-                    ))
-        
-        return features
-    
-    def _flood_fill(self, start_x: int, start_y: int, terrain_type: str, 
-                    visited: List[List[bool]]) -> List[Tuple[int, int]]:
-        """Find all connected tiles of the same terrain type."""
-        tiles = []
-        queue = deque([(start_x, start_y)])
-        visited[start_y][start_x] = True
-        
-        while queue:
-            x, y = queue.popleft()
-            tiles.append((x, y))
-            
-            for nx, ny in self._get_neighbors(x, y):
-                if (0 <= nx < self.width and 
-                    0 <= ny < self.height and 
-                    not visited[ny][nx]):
-                    
-                    if self.map.grid[ny][nx].terrain.name == terrain_type:
-                        visited[ny][nx] = True
-                        queue.append((nx, ny))
-        
-        return tiles
-    
-    def _select_notable_features(self, features: List[TerrainFeature]) -> List[TerrainFeature]:
-        """Filter to significant terrain features worth mentioning.
-        
-        Prioritizes: Rivers > Hills > Forests
-        Filters out tiny patches
-        """
-        # Define priority and minimum sizes
-        priority = {"River": 3, "Hill": 2, "Forest": 1}
-        min_size = max(3, int(0.02 * self.width * self.height))
-        
-        # Filter by size and sort by priority
-        notable = [f for f in features if f.size >= min_size]
-        notable.sort(key=lambda f: (priority.get(f.terrain_type, 0), f.size), reverse=True)
-        
-        # Limit to avoid overwhelming reports
-        result = []
-        counts = {"River": 0, "Hill": 0, "Forest": 0}
-        max_per_type = {"River": 2, "Hill": 3, "Forest": 3}
-        
-        for feature in notable:
-            terrain = feature.terrain_type
-            if terrain in counts and counts[terrain] < max_per_type.get(terrain, 2):
-                result.append(feature)
-                counts[terrain] += 1
-        
-        return result
-    
-    def _describe_terrain(self, features: List[TerrainFeature]) -> str:
-        """Generate natural language terrain description."""
-        descriptions = []
-        
-        for feature in features:
-            if feature.terrain_type == "River":
-                descriptions.append(self._describe_river(feature))
-            elif feature.terrain_type == "Hill":
-                descriptions.append(self._describe_hill(feature))
-            elif feature.terrain_type == "Forest":
-                descriptions.append(self._describe_forest(feature))
-        
-        if not descriptions:
-            return ""
-        
-        return "The battlefield features " + self._join_with_commas(descriptions) + "."
-    
-    def _describe_river(self, feature: TerrainFeature) -> str:
-        """Describe a river feature with shape and orientation."""
-        name = f"the {feature.name}" if feature.name else "a river"
-        shape = self._describe_shape(feature)
-        orientation = self._describe_orientation(feature)
-        location = self._soften_region(feature.map_region)
-        extent = self._describe_extent(feature)
-        
-        return f"{name} {shape} {orientation} through {location}{extent}"
-    
-    def _describe_hill(self, feature: TerrainFeature) -> str:
-        """Describe hills with scale and formation."""
-        name = f"the {feature.name}" if feature.name else None
-        scale = self._scale_word(feature.size)
-        shape = self._describe_shape(feature)
-        location = self._soften_region(feature.map_region)
-        orientation = self._describe_orientation(feature)
-        
-        if name:
-            return f"{name}, {shape} high ground {orientation} in {location}"
-        
-        # Ridgeline or scattered hills
-        width = feature.bounds[2] - feature.bounds[0] + 1
-        height = feature.bounds[3] - feature.bounds[1] + 1
-        if max(width, height) / min(width, height) >= 2:
-            return f"{scale} {shape} ridgeline {orientation} in {location}"
-        else:
-            return f"{scale} {shape} hills in {location}"
-    
-    def _describe_forest(self, feature: TerrainFeature) -> str:
-        """Describe wooded areas."""
-        name = f"the {feature.name}" if feature.name else None
-        scale = self._scale_word(feature.size)
-        shape = self._describe_shape(feature)
-        location = self._soften_region(feature.map_region)
-        
-        if name:
-            return f"{name}, {shape} woodland in {location}"
-        return f"{scale} {shape} woods in {location}"
-    
-    # =====================================================
-    # UNIT ANALYSIS
-    # =====================================================
-    
-    def _locate_all_units(self) -> List[UnitPosition]:
-        """Find and describe the position of every unit on the map."""
-        unit_positions = []
-        features = self._select_notable_features(self._find_terrain_features())
-        
-        for y in range(self.height):
-            for x in range(self.width):
-                unit = self.map.grid[y][x].unit
-                if unit is not None and hasattr(unit, 'x') and unit.x is not None:
-                    region = self._map_region_from_coords(x, y)
-                    nearest, distance = self._find_nearest_feature(x, y, features)
-                    
-                    unit_positions.append(UnitPosition(
-                        unit=unit,
-                        name=getattr(unit, 'name', 'Unknown'),
-                        unit_type=unit.__class__.__name__,
-                        x=x,
-                        y=y,
-                        faction=getattr(unit, 'faction', 'Unknown'),
-                        map_region=region,
-                        nearest_feature=nearest,
-                        distance_to_feature=distance
-                    ))
-        
-        return unit_positions
-    
-    def _group_into_formations(self, positions: List[UnitPosition]) -> List[Formation]:
-        """Group nearby units of the same faction into formations."""
-        if not positions:
-            return []
-        
-        formations = []
-        visited: Set[int] = set()
-        
-        for i, pos in enumerate(positions):
-            if i in visited:
+def _find_terrain_features(map) -> List[TerrainFeature]:
+    """Identify all contiguous terrain features using flood fill."""
+    visited = [[False] * map.width for _ in range(map.height)]
+    features = []
+
+    for y in range(map.height):
+        for x in range(map.width):
+            if visited[y][x]:
                 continue
-            
-            # Find all units within proximity of this unit
-            group = [pos]
-            visited.add(i)
-            queue = [i]
-            
-            while queue:
-                curr_idx = queue.pop(0)
-                curr_pos = positions[curr_idx]
+
+            terrain_type = map.grid[y][x].terrain.name
+            tiles = _flood_fill(map, x, y, terrain_type, visited)
+
+            if tiles:
+                center = _calculate_center(tiles)
+                bounds = _calculate_bounds(tiles)
+                region = _map_region_from_coords(map, center[0], center[1])
+                name = _extract_feature_name(map, tiles)
+
+                features.append(TerrainFeature(
+                    terrain_type=terrain_type,
+                    tiles=tiles,
+                    size=len(tiles),
+                    center=center,
+                    bounds=bounds,
+                    map_region=region,
+                    name=name
+                ))
+    
+    return features
+
+def _flood_fill(map, start_x: int, start_y: int, terrain_type: str, 
+                visited: List[List[bool]]) -> List[Tuple[int, int]]:
+    """Find all connected tiles of the same terrain type."""
+    tiles = []
+    queue = deque([(start_x, start_y)])
+    visited[start_y][start_x] = True
+    
+    while queue:
+        x, y = queue.popleft()
+        tiles.append((x, y))
+
+        for nx, ny in _get_neighbors(x, y):
+            if (0 <= nx < map.width and 
+                0 <= ny < map.height and 
+                not visited[ny][nx]):
                 
-                for j, other_pos in enumerate(positions):
-                    if j not in visited and other_pos.faction == curr_pos.faction:
-                        dist = self._distance(
-                            (curr_pos.x, curr_pos.y),
-                            (other_pos.x, other_pos.y)
-                        )
-                        if dist <= 3.0:  # Adjacent or nearby
-                            group.append(other_pos)
-                            visited.add(j)
-                            queue.append(j)
-            
-            # Create formation
-            center = self._calculate_center([(p.x, p.y) for p in group])
-            region = self._map_region_from_coords(center[0], center[1])
-            
-            formations.append(Formation(
-                faction=pos.faction,
-                units=group,
-                center=center,
-                map_region=region
-            ))
-        
-        return formations
+                if map.grid[ny][nx].terrain.name == terrain_type:
+                    visited[ny][nx] = True
+                    queue.append((nx, ny))
     
-    def _describe_deployments(self, formations: List[Formation], 
-                             all_positions: List[UnitPosition]) -> str:
-        """Describe how each faction has deployed its units."""
-        by_faction: Dict[str, List[Formation]] = defaultdict(list)
-        for formation in formations:
-            by_faction[formation.faction].append(formation)
-        
-        faction_reports = []
-        
-        for faction, faction_formations in by_faction.items():
-            # Get all units for this faction
-            faction_units = [p for p in all_positions if p.faction == faction]
-            
-            # Describe each unit's position
-            unit_descriptions = []
-            for unit_pos in faction_units:
-                unit_descriptions.append(self._describe_unit_position(unit_pos))
-            
-            if unit_descriptions:
-                joined = self._join_with_commas(unit_descriptions)
-                faction_reports.append(f"{faction} forces: {joined}")
-        
-        return ". ".join(faction_reports) + "." if faction_reports else ""
+    return tiles
+
+def _select_notable_features(map, features: List[TerrainFeature]) -> List[TerrainFeature]:
+    """Filter to significant terrain features worth mentioning."""
+    priority = {"River": 3, "Hill": 2, "Forest": 1}
+    min_size = max(3, int(0.02 * map.width * map.height))
+
+    notable = [f for f in features if f.size >= min_size]
+    notable.sort(key=lambda f: (priority.get(f.terrain_type, 0), f.size), reverse=True)
     
-    def _describe_unit_position(self, pos: UnitPosition) -> str:
-        """Generate detailed position description for a single unit.
-        
-        Example: "the 1st Virginia (Infantry) positioned in the northwest near the Stone Bridge"
-        """
-        # Unit identification
-        unit_id = f"the {pos.name} ({pos.unit_type})"
-        
-        # Location with terrain context
-        location_parts = [self._detailed_location(pos.x, pos.y, pos.map_region)]
-        
-        # Add terrain feature if relevant
-        if pos.nearest_feature and pos.distance_to_feature is not None:
-            if pos.distance_to_feature <= 0.5:  # On the feature
-                feature_name = self._feature_name(pos.nearest_feature)
-                location_parts.append(f"on {feature_name}")
-            elif pos.distance_to_feature <= 2.0:  # Adjacent
-                feature_name = self._feature_name(pos.nearest_feature)
-                direction = self._relative_direction(
-                    (pos.x, pos.y),
-                    pos.nearest_feature.center
-                )
-                location_parts.append(f"{direction} {feature_name}")
-        
-        location = " ".join(location_parts)
-        
-        return f"{unit_id} positioned {location}"
+    result = []
+    counts = {"River": 0, "Hill": 0, "Forest": 0}
+    max_per_type = {"River": 2, "Hill": 3, "Forest": 3}
     
-    def _describe_proximity(self, formations: List[Formation]) -> str:
-        """Describe opposing forces in close proximity."""
-        # Find opposing formations near each other
-        contacts = []
-        
-        for i, form_a in enumerate(formations):
-            for form_b in formations[i+1:]:
-                if form_a.faction != form_b.faction:
-                    dist = self._distance(form_a.center, form_b.center)
-                    if dist <= 5.0:
-                        contacts.append((form_a, form_b, dist))
-        
-        if not contacts:
-            return ""
-        
-        # Sort by distance (closest first)
-        contacts.sort(key=lambda x: x[2])
-        
-        # Describe most significant contacts
-        descriptions = []
-        for form_a, form_b, dist in contacts[:3]:
-            a_desc = self._formation_identifier(form_a)
-            b_desc = self._formation_identifier(form_b)
-            
-            # Proximity descriptor
-            if dist <= 1.5:
-                proximity = "in direct contact with"
-            elif dist <= 2.5:
-                proximity = "engaging"
-            elif dist <= 3.5:
-                proximity = "approaching"
-            else:
-                proximity = "near"
-            
-            # Relative direction
-            dx = form_b.center[0] - form_a.center[0]
-            dy = form_b.center[1] - form_a.center[1]
-            direction = self._direction_between_points(dx, dy)
-            
-            descriptions.append(f"{a_desc} {proximity} {b_desc}{direction}")
-        
-        if len(descriptions) == 1:
-            return descriptions[0].capitalize() + "."
-        return "Combat imminent: " + self._join_with_commas(descriptions) + "."
+    for feature in notable:
+        terrain = feature.terrain_type
+        if terrain in counts and counts[terrain] < max_per_type.get(terrain, 2):
+            result.append(feature)
+            counts[terrain] += 1
     
-    # =====================================================
-    # GEOMETRY UTILITIES
-    # =====================================================
+    return result
+
+def _extract_feature_name(map, tiles: List[Tuple[int, int]]) -> Optional[str]:
+    """Extract proper name from feature labels if present."""
+    name_counts: Dict[str, int] = {}
     
-    def _get_neighbors(self, x: int, y: int) -> List[Tuple[int, int]]:
-        """Get hex neighbors using offset coordinates."""
-        if y % 2 == 0:  # Even row
-            offsets = [(+1, 0), (-1, 0), (0, +1), (0, -1), (-1, +1), (-1, -1)]
-        else:  # Odd row
-            offsets = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (+1, -1)]
-        
-        neighbors = []
-        for dx, dy in offsets:
-            neighbors.append((x + dx, y + dy))
-        return neighbors
+    for x, y in tiles:
+        try:
+            features = getattr(map.grid[y][x], "features", []) or []
+            for feature_name in features:
+                name_counts[feature_name] = name_counts.get(feature_name, 0) + 1
+        except Exception:
+            continue
     
-    def _calculate_center(self, points: List[Tuple[int, int]]) -> Tuple[float, float]:
-        """Calculate geometric center of a set of points."""
-        if not points:
-            return (0.0, 0.0)
-        x_sum = sum(p[0] for p in points)
-        y_sum = sum(p[1] for p in points)
-        return (x_sum / len(points), y_sum / len(points))
-    
-    def _calculate_bounds(self, points: List[Tuple[int, int]]) -> Tuple[int, int, int, int]:
-        """Calculate bounding box: (min_x, min_y, max_x, max_y)."""
-        if not points:
-            return (0, 0, 0, 0)
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
-        return (min(xs), min(ys), max(xs), max(ys))
-    
-    def _distance(self, a: Tuple[float, float], b: Tuple[float, float]) -> float:
-        """Euclidean distance between two points."""
-        return math.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
-    
-    # =====================================================
-    # DESCRIPTION HELPERS
-    # =====================================================
-    
-    def _describe_shape(self, feature: TerrainFeature) -> str:
-        """Describe the shape of a terrain feature."""
-        width = feature.bounds[2] - feature.bounds[0] + 1
-        height = feature.bounds[3] - feature.bounds[1] + 1
-        ratio = max(width, height) / max(1, min(width, height))
-        
-        # Calculate compactness (how much it fills its bounding box)
-        bbox_area = width * height
-        compactness = feature.size / bbox_area if bbox_area > 0 else 0
-        
-        if ratio >= 3.0:
-            return "winding" if feature.terrain_type == "River" else "elongated"
-        elif ratio >= 2.0:
-            return "flowing" if feature.terrain_type == "River" else "extended"
-        elif compactness >= 0.7:
-            return "compact"
-        elif compactness >= 0.4:
-            return "irregular"
-        else:
-            return "sprawling"
-    
-    def _describe_orientation(self, feature: TerrainFeature) -> str:
-        """Describe how a feature is oriented."""
-        width = feature.bounds[2] - feature.bounds[0] + 1
-        height = feature.bounds[3] - feature.bounds[1] + 1
-        
-        if width >= height * 1.5:
-            return "running east-west"
-        elif height >= width * 1.5:
-            return "running north-south"
-        else:
-            return "oriented diagonally"
-    
-    def _describe_extent(self, feature: TerrainFeature) -> str:
-        """Describe how far a feature extends across the map."""
-        width = feature.bounds[2] - feature.bounds[0] + 1
-        height = feature.bounds[3] - feature.bounds[1] + 1
-        max_extent = max(width, height)
-        map_span = max(self.width, self.height)
-        
-        if max_extent >= map_span * 0.7:
-            return ", spanning most of the battlefield"
-        elif max_extent >= map_span * 0.5:
-            return ", extending across much of the area"
-        elif max_extent >= map_span * 0.3:
-            return ", covering considerable distance"
-        return ""
-    
-    def _scale_word(self, size: int) -> str:
-        """Convert size to descriptive word."""
-        total_tiles = self.width * self.height
-        fraction = size / max(1, total_tiles)
-        
-        if size >= 50 or fraction >= 0.18:
-            return "vast"
-        elif size >= 30 or fraction >= 0.12:
-            return "extensive"
-        elif size >= 15 or fraction >= 0.08:
-            return "substantial"
-        elif size >= 8 or fraction >= 0.04:
-            return "notable"
-        else:
-            return "small"
-    
-    def _map_region_from_coords(self, x: float, y: float) -> str:
-        """Convert coordinates to compass region (e.g., 'the northwest')."""
-        norm_x = x / max(1, self.width - 1) if self.width > 1 else 0.5
-        norm_y = y / max(1, self.height - 1) if self.height > 1 else 0.5
-        
-        col = 0 if norm_x < 0.33 else (2 if norm_x > 0.67 else 1)
-        row = 0 if norm_y < 0.33 else (2 if norm_y > 0.67 else 1)
-        
-        regions = {
-            (0, 0): "the northwest", (1, 0): "the north", (2, 0): "the northeast",
-            (0, 1): "the west",      (1, 1): "the center", (2, 1): "the east",
-            (0, 2): "the southwest", (1, 2): "the south",  (2, 2): "the southeast",
-        }
-        return regions[(col, row)]
-    
-    def _detailed_location(self, x: int, y: int, base_region: str) -> str:
-        """Provide detailed location including edge positions."""
-        norm_x = x / max(1, self.width - 1) if self.width > 1 else 0.5
-        norm_y = y / max(1, self.height - 1) if self.height > 1 else 0.5
-        
-        modifiers = []
-        if norm_x < 0.15:
-            modifiers.append("western edge of")
-        elif norm_x > 0.85:
-            modifiers.append("eastern edge of")
-        
-        if norm_y < 0.15:
-            modifiers.append("northern edge of")
-        elif norm_y > 0.85:
-            modifiers.append("southern edge of")
-        
-        base = self._soften_region(base_region)
-        
-        if modifiers:
-            return f"at the {' '.join(modifiers)} {base}"
-        return f"in {base}"
-    
-    def _soften_region(self, region: str) -> str:
-        """Make 'the center' less repetitive."""
-        return "the central area" if region == "the center" else region
-    
-    def _find_nearest_feature(self, x: int, y: int, 
-                              features: List[TerrainFeature]) -> Tuple[Optional[TerrainFeature], Optional[float]]:
-        """Find the nearest significant terrain feature to a position."""
-        if not features:
-            return None, None
-        
-        # Check if on a feature
-        for feature in features:
-            if (x, y) in feature.tiles:
-                return feature, 0.0
-        
-        # Find closest feature by center
-        closest = None
-        min_dist = float('inf')
-        
-        for feature in features:
-            dist = self._distance((x, y), feature.center)
-            if dist < min_dist:
-                min_dist = dist
-                closest = feature
-        
-        return closest, min_dist
-    
-    def _relative_direction(self, from_pos: Tuple[int, int], 
-                           to_pos: Tuple[float, float]) -> str:
-        """Describe direction from one position to another."""
-        dx = to_pos[0] - from_pos[0]
-        dy = to_pos[1] - from_pos[1]
-        
-        if abs(dx) > abs(dy) * 1.5:
-            return "to the east of" if dx > 0 else "to the west of"
-        elif abs(dy) > abs(dx) * 1.5:
-            return "to the south of" if dy > 0 else "to the north of"
-        else:
-            # Diagonal
-            if dx > 0 and dy > 0:
-                return "to the southeast of"
-            elif dx > 0 and dy < 0:
-                return "to the northeast of"
-            elif dx < 0 and dy > 0:
-                return "to the southwest of"
-            else:
-                return "to the northwest of"
-    
-    def _direction_between_points(self, dx: float, dy: float) -> str:
-        """Describe relative direction given deltas."""
-        if abs(dx) < 0.5 and abs(dy) < 0.5:
-            return ""
-        
-        if abs(dx) > abs(dy) * 2:
-            direction = " from the west" if dx > 0 else " from the east"
-        elif abs(dy) > abs(dx) * 2:
-            direction = " from the north" if dy > 0 else " from the south"
-        else:
-            if dx > 0 and dy > 0:
-                direction = " from the northwest"
-            elif dx > 0 and dy < 0:
-                direction = " from the southwest"
-            elif dx < 0 and dy > 0:
-                direction = " from the northeast"
-            else:
-                direction = " from the southeast"
-        
-        return direction
-    
-    def _feature_name(self, feature: TerrainFeature) -> str:
-        """Get a short reference name for a feature."""
-        if feature.name:
-            return f"the {feature.name}"
-        
-        type_names = {
-            "River": "the river",
-            "Hill": "the high ground",
-            "Forest": "the woods"
-        }
-        return type_names.get(feature.terrain_type, "the terrain")
-    
-    def _formation_identifier(self, formation: Formation) -> str:
-        """Create a short identifier for a formation."""
-        if len(formation.units) == 1:
-            unit = formation.units[0]
-            return f"the {unit.name}"
-        else:
-            # Multiple units
-            count = len(formation.units)
-            if count == 2:
-                return f"{formation.faction}'s two units"
-            elif count <= 5:
-                return f"{formation.faction}'s {self._number_word(count)} units"
-            else:
-                return f"{formation.faction}'s formation"
-    
-    def _number_word(self, n: int) -> str:
-        """Convert small numbers to words."""
-        words = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
-        return words[n] if 0 <= n < len(words) else str(n)
-    
-    def _extract_feature_name(self, tiles: List[Tuple[int, int]]) -> Optional[str]:
-        """Extract proper name from feature labels if present."""
-        name_counts: Dict[str, int] = {}
-        
-        for x, y in tiles:
-            try:
-                features = getattr(self.map.grid[y][x], "features", []) or []
-                for feature_name in features:
-                    name_counts[feature_name] = name_counts.get(feature_name, 0) + 1
-            except Exception:
-                continue
-        
-        if not name_counts:
-            return None
-        
-        # Return most common name if it covers at least 30% of tiles
-        most_common = max(name_counts.items(), key=lambda x: x[1])
-        if most_common[1] / len(tiles) >= 0.30:
-            return most_common[0]
-        
+    if not name_counts:
         return None
     
-    def _join_with_commas(self, items: List[str]) -> str:
-        """Join list with Oxford comma."""
-        items = [s for s in items if s]
-        if not items:
-            return ""
-        if len(items) == 1:
-            return items[0]
-        if len(items) == 2:
-            return f"{items[0]} and {items[1]}"
-        return ", ".join(items[:-1]) + f", and {items[-1]}"
+    most_common = max(name_counts.items(), key=lambda x: x[1])
+    if most_common[1] / len(tiles) >= 0.30:
+        return most_common[0]
+    
+    return None
+
+# =====================================================
+# UNIT ANALYSIS
+# =====================================================
+
+def _locate_all_units(map) -> List[UnitPosition]:
+    """Find and describe the position of every unit on the map."""
+    unit_positions = []
+
+    for y in range(map.height):
+        for x in range(map.width):
+            unit = map.grid[y][x].unit
+            if unit is not None and hasattr(unit, 'x') and unit.x is not None:
+                region = _map_region_from_coords(map, x, y)
+                
+                unit_positions.append(UnitPosition(
+                    unit=unit,
+                    name=getattr(unit, 'name', 'Unknown'),
+                    unit_type=unit.__class__.__name__,
+                    x=x,
+                    y=y,
+                    faction=getattr(unit, 'faction', 'Unknown'),
+                    map_region=region
+                ))
+    
+    return unit_positions
+
+# =====================================================
+# DESCRIPTION HELPERS
+# =====================================================
+
+def _describe_feature_concise(feature: TerrainFeature) -> str:
+    """Concise description of a terrain feature for tactical report."""
+    name = feature.name if feature.name else feature.terrain_type
+    location = _format_region(feature.map_region)
+    
+    width = feature.bounds[2] - feature.bounds[0] + 1
+    height = feature.bounds[3] - feature.bounds[1] + 1
+    
+    if width >= height * 1.5:
+        orientation = "E-W"
+    elif height >= width * 1.5:
+        orientation = "N-S"
+    else:
+        orientation = "diagonal"
+    
+    return f"{name} ({feature.terrain_type}) in {location}, oriented {orientation}"
+
+def _get_unit_attributes(unit) -> str:
+    """Extract and format unit attributes (size, quality, morale)."""
+    quality_labels = {1: "green", 2: "regular", 3: "seasoned", 4: "veteran", 5: "elite"}
+    morale_labels = {range(0, 2): "broken", range(2, 4): "shaken", range(4, 7): "steady",
+                        range(7, 9): "eager", range(9, 11): "fresh"}
+    size_labels = {range(1, 4): "small", range(4, 7): "average-sized", 
+                    range(7, 10): "large", range(10, 13): "very large"}
+    
+    def label_for(value, table):
+        for key, label in table.items():
+            if isinstance(key, range) and value in key:
+                return label
+            elif value == key:
+                return label
+        return "unknown"
+    
+    size = getattr(unit, 'size', 5)
+    quality = getattr(unit, 'quality', 3)
+    morale = getattr(unit, 'morale', 7)
+    
+    size_desc = label_for(size, size_labels)
+    quality_desc = label_for(quality, quality_labels)
+    morale_desc = label_for(morale, morale_labels)
+    
+    return f"{size_desc}, {quality_desc} formation; morale is {morale_desc}"
+
+def _get_size_label(size: int) -> str:
+    """Get size label for a unit."""
+    size_labels = {range(1, 4): "small", range(4, 7): "average-sized", 
+                    range(7, 10): "large", range(10, 13): "very large"}
+    for key, label in size_labels.items():
+        if isinstance(key, range) and size in key:
+            return label
+    return "average-sized"
+
+def _get_quality_label(quality: int) -> str:
+    """Get quality label for a unit."""
+    quality_labels = {1: "green", 2: "regular", 3: "seasoned", 4: "veteran", 5: "elite"}
+    return quality_labels.get(quality, "regular")
+
+def _describe_local_terrain(unit_pos: UnitPosition, features: List[TerrainFeature]) -> str:
+    """Describe terrain at and immediately around unit position."""
+    for feature in features:
+        if (unit_pos.x, unit_pos.y) in feature.tiles:
+            feature_name = feature.name if feature.name else feature.terrain_type
+            return f"On {feature_name}"
+    
+    return "On open ground"
+
+def _find_nearby_units(unit_pos: UnitPosition, other_units: List[UnitPosition], 
+                        max_distance: float) -> List[Tuple[UnitPosition, float, str]]:
+    """Find units within range with distance and direction."""
+    nearby = []
+    
+    for other in other_units:
+        dist = _distance((unit_pos.x, unit_pos.y), (other.x, other.y))
+        if dist <= max_distance:
+            direction = _get_direction_simple(unit_pos.x, unit_pos.y, other.x, other.y)
+            nearby.append((other, dist, direction))
+    
+    nearby.sort(key=lambda x: x[1])
+    return nearby[:5]
+
+def _find_nearby_features(unit_pos: UnitPosition, features: List[TerrainFeature],
+                            max_distance: float) -> List[Tuple[TerrainFeature, float, str]]:
+    """Find terrain features within range with distance and direction."""
+    nearby = []
+    
+    for feature in features:
+        dist = _distance((unit_pos.x, unit_pos.y), feature.center)
+        if dist <= max_distance and (unit_pos.x, unit_pos.y) not in feature.tiles:
+            direction = _get_direction_simple(unit_pos.x, unit_pos.y, 
+                                                    int(feature.center[0]), int(feature.center[1]))
+            nearby.append((feature, dist, direction))
+    
+    nearby.sort(key=lambda x: x[1])
+    return nearby[:3]
+
+def _assess_tactical_situation(friendly_units: List[UnitPosition], 
+                                enemy_units: List[UnitPosition],
+                                features: List[TerrainFeature]) -> List[str]:
+    """Generate high-level tactical assessment points."""
+    points = []
+    
+    if not enemy_units:
+        return ["No enemy forces detected on the battlefield"]
+    
+    friendly_center = _calculate_center([(u.x, u.y) for u in friendly_units])
+    enemy_center = _calculate_center([(u.x, u.y) for u in enemy_units])
+    
+    separation = _distance(friendly_center, enemy_center)
+    
+    if separation <= 2.0:
+        points.append("Forces are in direct contact - combat is occurring")
+    elif separation <= 4.0:
+        points.append("Enemy forces are nearby - engagement imminent")
+    elif separation <= 7.0:
+        points.append("Enemy forces are in tactical range - opportunity to advance or prepare")
+    else:
+        points.append("Enemy forces are at distance - opportunity for maneuver")
+    
+    enemy_direction = _get_direction_simple(
+        int(friendly_center[0]), int(friendly_center[1]),
+        int(enemy_center[0]), int(enemy_center[1])
+    )
+    points.append(f"Enemy main body is {enemy_direction.replace('to the ', '')}")
+    
+    strength_ratio = len(friendly_units) / max(len(enemy_units), 1)
+    if strength_ratio >= 1.5:
+        points.append(f"You have numerical advantage ({len(friendly_units)} vs {len(enemy_units)} units)")
+    elif strength_ratio <= 0.67:
+        points.append(f"Enemy has numerical advantage ({len(enemy_units)} vs {len(friendly_units)} units)")
+    else:
+        points.append(f"Forces are roughly balanced ({len(friendly_units)} vs {len(enemy_units)} units)")
+    
+    return points
+
+# =====================================================
+# GEOMETRY UTILITIES
+# =====================================================
+
+def _get_neighbors(x: int, y: int) -> List[Tuple[int, int]]:
+    """Get hex neighbors using offset coordinates."""
+    if y % 2 == 0:
+        offsets = [(+1, 0), (-1, 0), (0, +1), (0, -1), (-1, +1), (-1, -1)]
+    else:
+        offsets = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (+1, -1)]
+    
+    return [(x + dx, y + dy) for dx, dy in offsets]
+
+def _calculate_center(points: List[Tuple[int, int]]) -> Tuple[float, float]:
+    """Calculate geometric center of a set of points."""
+    if not points:
+        return (0.0, 0.0)
+    x_sum = sum(p[0] for p in points)
+    y_sum = sum(p[1] for p in points)
+    return (x_sum / len(points), y_sum / len(points))
+
+def _calculate_bounds(points: List[Tuple[int, int]]) -> Tuple[int, int, int, int]:
+    """Calculate bounding box: (min_x, min_y, max_x, max_y)."""
+    if not points:
+        return (0, 0, 0, 0)
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+def _distance(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    """Euclidean distance between two points."""
+    return math.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
+
+def _get_direction_simple(from_x: int, from_y: int, to_x: int, to_y: int) -> str:
+    """Get simple cardinal/intercardinal direction."""
+    dx = to_x - from_x
+    dy = to_y - from_y
+    
+    if abs(dx) < 0.5 and abs(dy) < 0.5:
+        return "at same position"
+    
+    angle = math.atan2(dy, dx)
+    degrees = math.degrees(angle)
+    
+    if degrees < 0:
+        degrees += 360
+    
+    directions = ["to the East", "to the Southeast", "to the South", "to the Southwest",
+                    "to the West", "to the Northwest", "to the North", "to the Northeast"]
+    index = int((degrees + 22.5) / 45) % 8
+    
+    return directions[index]
+
+def _map_region_from_coords(map, x: float, y: float) -> str:
+    """Convert coordinates to compass region (e.g., 'the northwest')."""
+    norm_x = x / max(1, map.width - 1) if map.width > 1 else 0.5
+    norm_y = y / max(1, map.height - 1) if map.height > 1 else 0.5
+
+    col = 0 if norm_x < 0.33 else (2 if norm_x > 0.67 else 1)
+    row = 0 if norm_y < 0.33 else (2 if norm_y > 0.67 else 1)
+    
+    regions = {
+        (0, 0): "the northwest", (1, 0): "the north", (2, 0): "the northeast",
+        (0, 1): "the west",      (1, 1): "the center", (2, 1): "the east",
+        (0, 2): "the southwest", (1, 2): "the south",  (2, 2): "the southeast",
+    }
+    return regions[(col, row)]
+
+def _format_region(region: str) -> str:
+    """Format region name without 'the' prefix for cleaner output."""
+    return region.replace("the ", "").replace(" area", "")

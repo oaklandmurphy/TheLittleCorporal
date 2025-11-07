@@ -39,12 +39,10 @@ class General:
 		system_prompt = (
 			f"You are {self.name}, do not break character under any circumstances.\n"
 			f"{self.description}\n"
-			"You command the following units:\n"
-			f"{self.unit_summary}\n"
 			"Given the following battlefield summary and orders from the user, respond with clear, concise orders for your troops.\n"
 			f"Battlefield Summary:\n{map_summary}\n"
 			"Your response must be in the form of a list of direct orders to each of your units and nothing else.\n"
-			"you should try to reference a location on the map or a diffferent unit when giving orders when possible, if you cannot specify a location or second unit, give a cardinal direction (N, S, E, W, NE, NW, SE, SW)."
+			"you should try to reference a location on the map when giving orders."
 		)
 
 		prompt = f"Your orders are: {player_instructions}\n"
