@@ -177,7 +177,13 @@ class Visualization:
     def render(self, hover_info=None, llm_processing=False):
         glClearColor(0.92, 0.92, 0.92, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        # Draw hexes
+
+        # Highlight reachable hexes if present in hover_info
+        reachable_hexes = None
+        if isinstance(hover_info, dict) and "reachable_hexes" in hover_info:
+            reachable_hexes = hover_info["reachable_hexes"]
+
+        # Draw hexes (with highlight if in reachable set)
         for row in range(self.game_map.height):
             for col in range(self.game_map.width):
                 hex = self.game_map.get_hex(col, row)
@@ -185,8 +191,13 @@ class Visualization:
                     continue
                 terrain = hex.terrain
                 color = TERRAIN_COLORS.get(terrain.name, DEFAULT_TERRAIN_COLOR)
+                # Highlight if in reachable_hexes
+                if reachable_hexes and (col, row) in reachable_hexes:
+                    # Overlay a blue highlight (mix color)
+                    color = tuple(min(1.0, c + 0.35) if i == 2 else c for i, c in enumerate(color))
                 cx, cy = hex_to_pixel(col, row)
                 draw_hex(cx, cy, color)
+
         # Draw units on top
         from unit import Infantry
         for row in range(self.game_map.height):
@@ -198,14 +209,16 @@ class Visualization:
                         draw_infantry_symbol(hex.unit)
                     else:
                         draw_unit_square(hex.unit)  # fallback for other unit types
-        
+
         # Draw combat indicators for engaged units
         self.draw_combat_indicators()
-        
+
         # Draw overlay info
         if hover_info:
-            self.render_hover_info(hover_info)
-        
+            # Only pass lines to render_hover_info
+            lines = hover_info["lines"] if isinstance(hover_info, dict) and "lines" in hover_info else hover_info
+            self.render_hover_info(lines)
+
         # Draw LLM processing indicator
         if llm_processing:
             self.render_llm_processing_indicator()
@@ -257,7 +270,7 @@ class Visualization:
         return best_hex
 
     def get_hover_info(self, mouse_pos):
-        """Return a list of lines describing the hovered hex/unit, including feature names and coordinates."""
+        """Return a dict with lines describing the hovered hex/unit, and reachable hexes if a unit is present."""
         hex_coords = self.get_hex_at_pixel(*mouse_pos)
         if not hex_coords:
             return None
@@ -272,11 +285,14 @@ class Visualization:
 
         t = hex.terrain
         terrain_line = f"{t.name} (Move: {t.move_cost}, Combat: {getattr(t, 'combat_modifier', getattr(t, 'combat_mod', 1.0))})"
-        
+
+        reachable_hexes = None
         if hex.unit:
             unit_line = hex.unit.status() if hasattr(hex.unit, "status") else str(hex.unit)
             lines.append(unit_line)
             lines.append(f"Terrain: {terrain_line}")
+            # Compute reachable hexes for this unit
+            reachable_hexes = set(self.game_map.find_reachable_hexes(hex.unit).keys())
         else:
             lines.append(terrain_line)
 
@@ -285,7 +301,10 @@ class Visualization:
             if feat_str:
                 lines.append(f"Features: {feat_str}")
 
-        return lines if lines else None
+        result = {"lines": lines}
+        if reachable_hexes:
+            result["reachable_hexes"] = reachable_hexes
+        return result
 
     def render_hover_info(self, hover_info):
         if not hover_info:

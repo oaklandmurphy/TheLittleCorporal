@@ -299,8 +299,8 @@ class Map:
 
     def _direction_offsets(self, y: int) -> List[Tuple[int, int]]:
         """Return the 6 neighbor direction offsets in order, matching get_neighbors order."""
-        offsets_even = [(+1, 0), (-1, 0), (0, +1), (0, -1), (-1, +1), (-1, -1)]
-        offsets_odd = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (+1, -1)]
+        offsets_even = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, -1), (-1, -1)]
+        offsets_odd = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (-1, +1)]
         return offsets_odd if y % 2 else offsets_even
 
     def _desired_along_direction(self, x: int, y: int, dir_index: int, steps: int = 1) -> Tuple[int, int]:
@@ -493,9 +493,9 @@ class Map:
     # --- Adjacency and Combat ---
     def get_neighbors(self, x: int, y: int):
         """Return hex neighbors using offset coordinates."""
-        offsets_even = [(+1, 0), (-1, 0), (0, +1), (0, -1), (-1, +1), (-1, -1)]
-        offsets_odd = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (+1, -1)]
-        offsets = offsets_odd if y % 2 else offsets_even
+        offsets_even = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, -1), (-1, -1)]
+        offsets_odd = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (-1, +1)]
+        offsets = offsets_odd if x % 2 else offsets_even
         for dx, dy in offsets:
             yield x + dx, y + dy
 
