@@ -268,10 +268,10 @@ class Map:
 
     # --- Staff Officer movement helpers and actions ---
     def _hex_distance(self, x1: int, y1: int, x2: int, y2: int) -> int:
-        """Calculate hex distance using cube coordinates for odd-r offset layout."""
+        """Calculate hex distance using cube coordinates for even-q (column offset) layout."""
         def offset_to_cube(x: int, y: int) -> Tuple[int, int, int]:
-            q = x - (y - (y & 1)) // 2
-            r = y
+            q = x
+            r = y - (x - (x & 1)) // 2
             return q, r, -q - r
 
         q1, r1, s1 = offset_to_cube(x1, y1)
@@ -458,7 +458,8 @@ class Map:
 
     # --- Dijkstra Pathfinding ---
     def find_reachable_hexes(self, unit: Unit):
-        """Find all reachable hexes within unit.mobility using terrain move_cost."""
+        """Find all reachable hexes within unit.mobility using terrain move_cost and enemy zone of control (ZOC).
+        Entering a hex adjacent to an enemy unit sets remaining movement to 0 for the turn."""
         start = (unit.x, unit.y)
         max_cost = unit.mobility
 
@@ -466,15 +467,27 @@ class Map:
         pq = [(0, start)]
         reachable = {}
 
+        def is_adjacent_to_enemy(x, y):
+            for nx, ny in self.get_neighbors(x, y):
+                if 0 <= nx < self.width and 0 <= ny < self.height:
+                    neighbor_unit = self.grid[ny][nx].unit
+                    if neighbor_unit and neighbor_unit.faction != unit.faction:
+                        return True
+            return False
+
         while pq:
             current_cost, (x, y) = heapq.heappop(pq)
             if current_cost > max_cost:
                 continue
-            
+
             # Mark current hex as reachable only if it's the start position or unoccupied
             current_tile = self.grid[y][x]
             if (x, y) == start or current_tile.unit is None:
                 reachable[(x, y)] = current_cost
+
+            # If this hex is adjacent to an enemy (ZOC), do not allow further movement from here
+            if (x, y) != start and is_adjacent_to_enemy(x, y):
+                continue
 
             for nx, ny in self.get_neighbors(x, y):
                 if not (0 <= nx < self.width and 0 <= ny < self.height):

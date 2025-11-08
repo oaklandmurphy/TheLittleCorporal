@@ -159,33 +159,35 @@ def main():
 	# set up remote host
 	# use None for local ollama
 	# host = "http://67.181.163.41:42069"
-	# max_retries = 9
-	# num_threads = None
-	# num_ctx = None
+	max_retries = 9
+	num_threads = None
+	num_ctx = None
 	
 	host = None
-	max_retries = 9
-	num_threads = 4
-	num_ctx = 4096
+	# max_retries = 9
+	# num_threads = 4
+	# num_ctx = 4096
+	
 
 	# specify model
-	model = "llama3.2:3b"
+	# model = "llama3.2:3b"
 	# model = "llama3.1:8b"
-	# model = "gpt-oss:20b"
+	gen_model = "gpt-oss:120b-cloud"
+	so_model = "gpt-oss:20b-cloud"
 
 	# Alternate turns between French and Austrian
 	faction_names = ["French", "Austrian"]
 
 	# Setup generals
 	generals = {
-		"French": General(unit_list=game_map.get_units_by_faction("French"), faction="French", model=model, identity_prompt=blue_general_preset, ollama_host=host), 
-		"Austrian": General(unit_list=game_map.get_units_by_faction("Austrian"), faction="Austrian", model=model, identity_prompt=yellow_general_preset, ollama_host=host)
+		"French": General(unit_list=game_map.get_units_by_faction("French"), faction="French", model=gen_model, identity_prompt=blue_general_preset, ollama_host=host), 
+		"Austrian": General(unit_list=game_map.get_units_by_faction("Austrian"), faction="Austrian", model=gen_model, identity_prompt=yellow_general_preset, ollama_host=host)
 	}
 	
 	# Staff officers that translate orders into concrete moves via tools
 	staff_officers = {
-		"French": StaffOfficer(name=generals["French"].name, unit_list=game_map.get_units_by_faction("French"), game_map=game_map, model=model, ollama_host=host),
-		"Austrian": StaffOfficer(name=generals["Austrian"].name, unit_list=game_map.get_units_by_faction("Austrian"), game_map=game_map, model=model, ollama_host=host),
+		"French": StaffOfficer(name=generals["French"].name, unit_list=game_map.get_units_by_faction("French"), game_map=game_map, model=so_model, ollama_host=host),
+		"Austrian": StaffOfficer(name=generals["Austrian"].name, unit_list=game_map.get_units_by_faction("Austrian"), game_map=game_map, model=so_model, ollama_host=host),
 	}
 
 	# Run the game loop

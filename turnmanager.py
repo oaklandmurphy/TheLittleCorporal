@@ -87,7 +87,7 @@ class TurnManager:
         input_thread_obj.start()
         
         # LLM processing thread - handles general and staff officer interactions
-        def llm_processing_thread(player_prompt, current_faction, general, map_summary, staff_officer):
+        def llm_processing_thread(player_prompt, current_faction, general, map_summary_general, staff_officer, map_summary_so):
             """Run LLM calls in background thread to keep pygame responsive."""
             try:
                 print(f"\n[{current_faction} General's Turn]")
@@ -95,14 +95,14 @@ class TurnManager:
                 # General responds to player instructions
                 general_response = general.get_instructions(
                     player_instructions=player_prompt, 
-                    map_summary=map_summary
+                    map_summary=map_summary_general
                 )
                 print(f"\n[{current_faction} General's Orders]:\n{general_response}")
                 
                 # Staff officer executes orders
                 applied = staff_officer.process_orders(
                     general_response, 
-                    map_summary=map_summary, 
+                    map_summary=map_summary_so, 
                     faction=current_faction, 
                     max_retries=max_retries
                 )
@@ -145,12 +145,12 @@ class TurnManager:
                 current_general = generals[current_faction]
                 
                 # Generate and print tactical report
-                map_summary = generate_tactical_report(
+                map_summary_general = generate_tactical_report(
                     self.map, 
                     current_faction, 
-                    current_general.unit_list
+                    current_general.unit_list,
                 )
-                print("\n" + map_summary)
+                print("\n" + map_summary_general)
                 
                 # Allow input
                 waiting_for_input = False
@@ -171,18 +171,11 @@ class TurnManager:
                 general = generals[current_faction]
                 staff_officer = staff_officers[current_faction]
                 
-                # Generate tactical report for LLM context
-                map_summary = generate_tactical_report(
-                    self.map, 
-                    current_faction, 
-                    general.unit_list
-                )
-                
                 # Start LLM processing in background
                 llm_processing.set()
                 llm_thread = threading.Thread(
                     target=llm_processing_thread,
-                    args=(player_prompt, current_faction, general, map_summary, staff_officer),
+                    args=(player_prompt, current_faction, general, map_summary_general, staff_officer, map_summary_general),
                     daemon=True
                 )
                 llm_thread.start()
