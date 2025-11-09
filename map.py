@@ -16,6 +16,56 @@ class Hex:
 
 
 class Map:
+    def get_feature_coordinates(self, feature_name: str) -> list[tuple[int, int]]:
+        """Return a list of (x, y) coordinates that make up the given feature name."""
+        coords = []
+        for y in range(self.height):
+            for x in range(self.width):
+                if feature_name in self.grid[y][x].features:
+                    coords.append((x, y))
+        return coords
+
+    def describe_feature(self, feature_name: str) -> str:
+        """Return an English description of the feature: terrain type, units present, nearby units, and coordinates."""
+        coords = self.get_feature_coordinates(feature_name)
+        if not coords:
+            return f"No feature named '{feature_name}' found."
+
+        # Determine terrain type (majority terrain among feature hexes)
+        terrain_count = {}
+        for x, y in coords:
+            tname = self.grid[y][x].terrain.name
+            terrain_count[tname] = terrain_count.get(tname, 0) + 1
+        terrain_type = max(terrain_count, key=terrain_count.get)
+
+        # Units present on the feature
+        units_on = []
+        for x, y in coords:
+            unit = self.grid[y][x].unit
+            if unit:
+                units_on.append(f"{unit.name} ({unit.faction}) at ({x},{y})")
+
+        # Units near the feature (adjacent to any feature hex, but not on it)
+        units_near = set()
+        for x, y in coords:
+            for nx, ny in self.get_neighbors(x, y):
+                if (nx, ny) not in coords and 0 <= nx < self.width and 0 <= ny < self.height:
+                    nunit = self.grid[ny][nx].unit
+                    if nunit:
+                        units_near.add(f"{nunit.name} ({nunit.faction}) at ({nx},{ny})")
+
+        desc = f"Feature '{feature_name}':\n"
+        desc += f"  Terrain type: {terrain_type}\n"
+        desc += f"  Hexes: {coords}\n"
+        if units_on:
+            desc += f"  Units present: {', '.join(units_on)}\n"
+        else:
+            desc += "  Units present: None\n"
+        if units_near:
+            desc += f"  Units nearby: {', '.join(units_near)}\n"
+        else:
+            desc += "  Units nearby: None\n"
+        return desc
     """Hexagonal grid storing terrain and units, with pathfinding and combat logic."""
     def __init__(self, width: int, height: int):
         self.width = width

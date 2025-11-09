@@ -10,6 +10,37 @@ from map import Map
 
 
 class StaffOfficer:
+
+	def extract_features_and_units(self, text: str, game_map: Optional[Map] = None) -> dict:
+		"""
+		Parse a string and extract any named features and units present on the map.
+		Returns a dict with 'features' and 'units' keys, each a list of names found in the text and present on the map.
+		"""
+		import re
+		game_map = game_map or self.map
+		# Collect all feature names from the map
+		feature_names = set()
+		for y in range(game_map.height):
+			for x in range(game_map.width):
+				for fname in game_map.grid[y][x].features:
+					feature_names.add(fname)
+		# Collect all unit names from the map
+		unit_names = set()
+		for y in range(game_map.height):
+			for x in range(game_map.width):
+				unit = game_map.grid[y][x].unit
+				if unit:
+					unit_names.add(unit.name)
+		# Find all feature and unit names mentioned in the text (case-insensitive, word boundaries)
+		found_features = set()
+		found_units = set()
+		for fname in feature_names:
+			if re.search(rf'\b{re.escape(fname)}\b', text, re.IGNORECASE):
+				found_features.add(fname)
+		for uname in unit_names:
+			if re.search(rf'\b{re.escape(uname)}\b', text, re.IGNORECASE):
+				found_units.add(uname)
+		return {"features": list(found_features), "units": list(found_units)}
 	"""Converts a General's written orders into concrete unit movements via LLM tools.
 	
 	Core workflow:
