@@ -16,6 +16,64 @@ class Hex:
 
 
 class Map:
+    def list_feature_names(self) -> list[str]:
+        """Return a sorted list of all unique feature names present on the map."""
+        features = set()
+        for y in range(self.height):
+            for x in range(self.width):
+                for fname in self.grid[y][x].features:
+                    features.add(fname)
+        return sorted(features)
+    def get_feature_coordinates(self, feature_name: str) -> list[tuple[int, int]]:
+        """Return a list of (x, y) coordinates that make up the given feature name."""
+        coords = []
+        for y in range(self.height):
+            for x in range(self.width):
+                if feature_name in self.grid[y][x].features:
+                    coords.append((x, y))
+        return coords
+
+    def describe_feature(self, feature_name: str) -> str:
+        """Return an English description of the feature: terrain type, units present, nearby units, and coordinates."""
+        coords = self.get_feature_coordinates(feature_name)
+        if not coords:
+            return f"No feature named '{feature_name}' found."
+
+        # Determine terrain type (majority terrain among feature hexes)
+        terrain_count = {}
+        for x, y in coords:
+            tname = self.grid[y][x].terrain.name
+            terrain_count[tname] = terrain_count.get(tname, 0) + 1
+        terrain_type = max(terrain_count, key=terrain_count.get)
+
+        # Units present on the feature
+        units_on = []
+        for x, y in coords:
+            unit = self.grid[y][x].unit
+            if unit:
+                units_on.append(f"{unit.name} ({unit.faction}) at ({x},{y})")
+
+        # Units near the feature (adjacent to any feature hex, but not on it)
+        units_near = set()
+        for x, y in coords:
+            for nx, ny in self.get_neighbors(x, y):
+                if (nx, ny) not in coords and 0 <= nx < self.width and 0 <= ny < self.height:
+                    nunit = self.grid[ny][nx].unit
+                    if nunit:
+                        units_near.add(f"{nunit.name} ({nunit.faction}) at ({nx},{ny})")
+
+        desc = f"Feature '{feature_name}':\n"
+        desc += f"  Terrain type: {terrain_type}\n"
+        desc += f"  Hexes: {coords}\n"
+        if units_on:
+            desc += f"  Units present: {', '.join(units_on)}\n"
+        else:
+            desc += "  Units present: None\n"
+        if units_near:
+            desc += f"  Units nearby: {', '.join(units_near)}\n"
+        else:
+            desc += "  Units nearby: None\n"
+        return desc
     """Hexagonal grid storing terrain and units, with pathfinding and combat logic."""
     def __init__(self, width: int, height: int):
         self.width = width
@@ -268,10 +326,10 @@ class Map:
 
     # --- Staff Officer movement helpers and actions ---
     def _hex_distance(self, x1: int, y1: int, x2: int, y2: int) -> int:
-        """Calculate hex distance using cube coordinates for odd-r offset layout."""
+        """Calculate hex distance using cube coordinates for even-q (column offset) layout."""
         def offset_to_cube(x: int, y: int) -> Tuple[int, int, int]:
-            q = x - (y - (y & 1)) // 2
-            r = y
+            q = x
+            r = y - (x - (x & 1)) // 2
             return q, r, -q - r
 
         q1, r1, s1 = offset_to_cube(x1, y1)
@@ -299,8 +357,8 @@ class Map:
 
     def _direction_offsets(self, y: int) -> List[Tuple[int, int]]:
         """Return the 6 neighbor direction offsets in order, matching get_neighbors order."""
-        offsets_even = [(+1, 0), (-1, 0), (0, +1), (0, -1), (-1, +1), (-1, -1)]
-        offsets_odd = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (+1, -1)]
+        offsets_even = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, -1), (-1, -1)]
+        offsets_odd = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (-1, +1)]
         return offsets_odd if y % 2 else offsets_even
 
     def _desired_along_direction(self, x: int, y: int, dir_index: int, steps: int = 1) -> Tuple[int, int]:
@@ -458,7 +516,8 @@ class Map:
 
     # --- Dijkstra Pathfinding ---
     def find_reachable_hexes(self, unit: Unit):
-        """Find all reachable hexes within unit.mobility using terrain move_cost."""
+        """Find all reachable hexes within unit.mobility using terrain move_cost and enemy zone of control (ZOC).
+        Entering a hex adjacent to an enemy unit sets remaining movement to 0 for the turn."""
         start = (unit.x, unit.y)
         max_cost = unit.mobility
 
@@ -466,15 +525,27 @@ class Map:
         pq = [(0, start)]
         reachable = {}
 
+        def is_adjacent_to_enemy(x, y):
+            for nx, ny in self.get_neighbors(x, y):
+                if 0 <= nx < self.width and 0 <= ny < self.height:
+                    neighbor_unit = self.grid[ny][nx].unit
+                    if neighbor_unit and neighbor_unit.faction != unit.faction:
+                        return True
+            return False
+
         while pq:
             current_cost, (x, y) = heapq.heappop(pq)
             if current_cost > max_cost:
                 continue
-            
+
             # Mark current hex as reachable only if it's the start position or unoccupied
             current_tile = self.grid[y][x]
             if (x, y) == start or current_tile.unit is None:
                 reachable[(x, y)] = current_cost
+
+            # If this hex is adjacent to an enemy (ZOC), do not allow further movement from here
+            if (x, y) != start and is_adjacent_to_enemy(x, y):
+                continue
 
             for nx, ny in self.get_neighbors(x, y):
                 if not (0 <= nx < self.width and 0 <= ny < self.height):
@@ -493,9 +564,9 @@ class Map:
     # --- Adjacency and Combat ---
     def get_neighbors(self, x: int, y: int):
         """Return hex neighbors using offset coordinates."""
-        offsets_even = [(+1, 0), (-1, 0), (0, +1), (0, -1), (-1, +1), (-1, -1)]
-        offsets_odd = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (+1, -1)]
-        offsets = offsets_odd if y % 2 else offsets_even
+        offsets_even = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, -1), (-1, -1)]
+        offsets_odd = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (-1, +1)]
+        offsets = offsets_odd if x % 2 else offsets_even
         for dx, dy in offsets:
             yield x + dx, y + dy
 

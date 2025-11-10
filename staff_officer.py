@@ -10,6 +10,103 @@ from map import Map
 
 
 class StaffOfficer:
+
+	def build_context_description(self, feature_names: list, friendly_units: list, enemy_units: list, game_map: Optional[Map] = None) -> str:
+		"""
+		Build a prompt description for the LLM given lists of feature names, friendly units, and enemy units.
+		Uses map.describe_feature for features and includes unit details.
+		"""
+		game_map = game_map or self.map
+		desc_lines = []
+		# Describe features
+		for fname in feature_names:
+			desc = game_map.describe_feature(fname)
+			desc_lines.append(desc)
+		# Describe friendly units
+		if friendly_units:
+			desc_lines.append("\nFRIENDLY UNITS:")
+			for uname in friendly_units:
+				# Find the unit object
+				unit_obj = None
+				for y in range(game_map.height):
+					for x in range(game_map.width):
+						unit = game_map.grid[y][x].unit
+						if unit and unit.name == uname:
+							unit_obj = unit
+							break
+					if unit_obj:
+						break
+				if unit_obj:
+					desc_lines.append(f"  {unit_obj.name} ({getattr(unit_obj, 'faction', 'Unknown')}) at ({unit_obj.x},{unit_obj.y}) strength: {getattr(unit_obj, 'strength', '?')}")
+				else:
+					desc_lines.append(f"  {uname} (not found on map)")
+		# Describe enemy units
+		if enemy_units:
+			desc_lines.append("\nENEMY UNITS:")
+			for uname in enemy_units:
+				unit_obj = None
+				for y in range(game_map.height):
+					for x in range(game_map.width):
+						unit = game_map.grid[y][x].unit
+						if unit and unit.name == uname:
+							unit_obj = unit
+							break
+					if unit_obj:
+						break
+				if unit_obj:
+					desc_lines.append(f"  {unit_obj.name} ({getattr(unit_obj, 'faction', 'Unknown')}) at ({unit_obj.x},{unit_obj.y}) strength: {getattr(unit_obj, 'strength', '?')}")
+				else:
+					desc_lines.append(f"  {uname} (not found on map)")
+		return "\n".join(desc_lines)
+
+	def extract_features_and_units(self, text: str, game_map: Optional[Map] = None, friendly_faction: Optional[str] = None) -> dict:
+		"""
+		Parse a string and extract any named features and units present on the map.
+		Returns a dict with 'features', 'friendly_units', and 'enemy_units' keys, each a list of names found in the text and present on the map.
+		"""
+		import re
+		game_map = game_map or self.map
+		# Use new map method to get all feature names
+		feature_names = set(game_map.list_feature_names())
+		# Determine friendly and enemy units using get_units_by_faction
+		if friendly_faction is None and self.unit_list:
+			# Guess faction from first unit in unit_list
+			friendly_faction = getattr(self.unit_list[0], 'faction', None)
+		friendly_units = set()
+		enemy_units = set()
+		if friendly_faction:
+			for unit in game_map.get_units_by_faction(friendly_faction):
+				friendly_units.add(unit.name)
+			# Assume all other units are enemy
+			all_unit_names = set()
+			for y in range(game_map.height):
+				for x in range(game_map.width):
+					unit = game_map.grid[y][x].unit
+					if unit:
+						all_unit_names.add(unit.name)
+			enemy_units = all_unit_names - friendly_units
+		else:
+			# If no faction info, treat all units as friendly
+			for y in range(game_map.height):
+				for x in range(game_map.width):
+					unit = game_map.grid[y][x].unit
+					if unit:
+						friendly_units.add(unit.name)
+			enemy_units = set()
+		# Find all feature and unit names mentioned in the text (case-insensitive, word boundaries)
+		found_features = set()
+		found_friendly = set()
+		found_enemy = set()
+		for fname in feature_names:
+			if re.search(rf'\b{re.escape(fname)}\b', text, re.IGNORECASE):
+				found_features.add(fname)
+		for uname in friendly_units:
+			if re.search(rf'\b{re.escape(uname)}\b', text, re.IGNORECASE):
+				found_friendly.add(uname)
+		for uname in enemy_units:
+			if re.search(rf'\b{re.escape(uname)}\b', text, re.IGNORECASE):
+				found_enemy.add(uname)
+		return {"features": list(found_features), "friendly_units": list(found_friendly), "enemy_units": list(found_enemy)}
 	"""Converts a General's written orders into concrete unit movements via LLM tools.
 	
 	Core workflow:
@@ -90,55 +187,45 @@ class StaffOfficer:
 	# =====================================================
 
 	def process_orders(
-		self, 
-		orders: str, 
-		faction: Optional[str] = None, 
-		max_rounds: int = 8, 
-		map_summary: str = "", 
-		num_thread: int = 4, 
-		num_ctx: int = 4096, 
+		self,
+		orders: str,
+		faction: Optional[str] = None,
+		max_rounds: int = 8,
+		num_thread: int = 4,
+		num_ctx: int = 4096,
 		max_retries: int = 2
 	) -> Dict[str, Any]:
 		"""Process written orders from the general and execute tool calls on the map.
-		
-		Args:
-			orders: Text instructions from the general
-			faction: Name of the faction (for context in system prompt)
-			max_rounds: Maximum LLM interaction rounds per attempt
-			map_summary: Current battlefield situation summary
-			num_thread: Ollama thread count
-			num_ctx: Ollama context size
-			max_retries: Number of retry attempts if validation fails
-			
-		Returns:
-			{
-				"ok": bool,
-				"applied": List[Dict] - executed tool calls,
-				"validation": Dict - validation details,
-				"error": str (if failed)
-			}
+		Now parses orders for features and units, builds a context description, and uses it as map_summary.
 		"""
 		if ollama is None:
 			return {"ok": False, "error": "ollama Python package not available"}
 
+		# Parse orders for features and units
+		parsed = self.extract_features_and_units(orders, self.map, faction)
+		map_summary = self.build_context_description(
+			parsed["features"], parsed["friendly_units"], parsed["enemy_units"], self.map
+		)
+		print(map_summary)
+
 		messages = self._build_initial_messages(orders, faction, map_summary)
-		
+
 		for attempt in range(max_retries + 1):
 			# Collect tool calls from LLM
 			collected_calls = self._collect_tool_calls(messages, max_rounds, num_thread, num_ctx)
-			
+
 			# Display what was collected
 			self._print_collected_orders(collected_calls, attempt, max_retries)
-			
+
 			# Validate that exactly one order per unit was issued
 			validation = self._validate_order_coverage(collected_calls)
 			self._print_validation_result(validation)
-			
+
 			if validation["valid"]:
 				# Execute all validated tool calls
 				applied = self._execute_all_tools(collected_calls)
 				return {"ok": True, "applied": applied, "validation": validation}
-			
+
 			# Validation failed - if retries remain, add feedback and try again
 			if attempt < max_retries:
 				feedback = self._build_retry_feedback(validation)
@@ -146,7 +233,7 @@ class StaffOfficer:
 			else:
 				# Out of retries
 				return {"ok": False, "error": validation["error"], "applied": [], "validation": validation}
-		
+
 		return {"ok": False, "error": "Max retries exceeded", "applied": [], "validation": validation}
 
 	# =====================================================
@@ -177,7 +264,9 @@ class StaffOfficer:
 		return (
 			f"You are the staff officer to General {self.name}.\n"
 			f"Your job is to convert the general's written orders into concrete unit movements on a hex map.\n\n"
+			f"Here is a description of relevant units and locations on the hex grid battlefield:\n"
 			f"{map_summary}\n\n"
+			f"When ordering a unit to a location, use one of the coordinate pairs listed below that terrain feature in the Hexes section.\n"
 			f"YOUR UNITS ({num_units} total):\n"
 			f"{self.unit_summary}\n"
 			f"CRITICAL REQUIREMENT:\n"
@@ -187,9 +276,10 @@ class StaffOfficer:
 			f"1. Call exactly {num_units} tools - one per unit\n"
 			f"2. Each tool call must specify a different unit_name from the list above\n"
 			f"3. Do NOT issue multiple orders to the same unit\n"
-			f"4. Do NOT skip any units\n"
-			f"5. Use only tool calls - no text responses\n"
-			f"6. If an order is unclear, make a reasonable tactical decision\n\n"
+			f"4. DO NOT order multiple units to the same hex, if two units are ordered to the same terrain feature, choose different coordinates within that feature for each unit\n"
+			f"5. Do NOT skip any units\n"
+			f"6. Use only tool calls - no text responses\n"
+			f"7. If an order is unclear, make a reasonable tactical decision\n\n"
 		)
 
 	def _collect_tool_calls(

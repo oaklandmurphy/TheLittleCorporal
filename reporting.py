@@ -73,9 +73,8 @@ def generate_tactical_report(map, faction: str, unit_list: List = None) -> str:
     lines.append(f"=== TACTICAL REPORT FOR {faction.upper()} FORCES ===\n")
 
     # Section 1: Terrain Overview
-    lines.append("TERRAIN FEATURES:\n"
-                f"- x=0 is the western edge, increasing eastward\n"
-			    f"- y=0 is the northern edge, increasing southward\n\n")
+    lines.append("TERRAIN FEATURES:\n")
+
     if major_features:
         for feature in major_features:
             terrain_desc = _describe_feature_concise(feature)
@@ -83,41 +82,43 @@ def generate_tactical_report(map, faction: str, unit_list: List = None) -> str:
     else:
         lines.append("  - Open terrain with no major features")
     lines.append("")
-    
+
     # Section 2: Own Forces (detailed, unit by unit)
     lines.append(f"YOUR FORCES ({len(friendly_units)} units):")
     for unit_pos in friendly_units:
         lines.append(f"\n  [{unit_pos.name}]")
         lines.append(f"    Type: {unit_pos.unit_type}")
-        
+
         # Add unit attributes (size, quality, morale)
         unit_status = _get_unit_attributes(unit_pos.unit)
         lines.append(f"    Status: {unit_status}")
-        
-        lines.append(f"    Position: {_format_region(unit_pos.map_region)} (coordinates {unit_pos.x}, {unit_pos.y})")
-        
+
+        lines.append(f"    Position: {_format_region(unit_pos.map_region)}")
+
         # Local terrain
         local_terrain = _describe_local_terrain(unit_pos, major_features)
         if local_terrain:
             lines.append(f"    Terrain: {local_terrain}")
-        
+
         # Nearby enemies
         nearby_enemies = _find_nearby_units(unit_pos, enemy_units, max_distance=5.0)
         if nearby_enemies:
             lines.append(f"    Nearby enemies:")
             for enemy, dist, direction in nearby_enemies:
-                lines.append(f"      - {enemy.name}: {dist:.1f} hexes {direction}")
+                meters = dist * 200
+                lines.append(f"      - {enemy.name}: {meters:.0f} meters {direction}")
         else:
-            lines.append(f"    Nearby enemies: None within 5 hexes")
-        
+            lines.append(f"    Nearby enemies: None within 1000 meters")
+
         # Key terrain features nearby
         nearby_features = _find_nearby_features(unit_pos, major_features, max_distance=4.0)
         if nearby_features:
             lines.append(f"    Key terrain nearby:")
             for feature, dist, direction in nearby_features:
                 feature_name = feature.name if feature.name else feature.terrain_type
-                lines.append(f"      - {feature_name}: {dist:.1f} hexes {direction}")
-    
+                meters = dist * 200
+                lines.append(f"      - {feature_name}: {meters:.0f} meters {direction}")
+
     lines.append("")
     
     # Section 3: Allied Forces (friendly faction, not under command)
@@ -305,7 +306,7 @@ def _describe_feature_concise(feature: TerrainFeature) -> str:
     else:
         orientation = "diagonal"
     
-    return f"{name} ({feature.terrain_type}) in {location}, oriented {orientation}"
+    return f"{name} ({feature.terrain_type}) in the {location} of the battlefield, oriented {orientation}"
 
 def _get_unit_attributes(unit) -> str:
     """Extract and format unit attributes (size, quality, morale)."""
