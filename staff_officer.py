@@ -206,7 +206,8 @@ class StaffOfficer:
 		map_summary = self.build_context_description(
 			parsed["features"], parsed["friendly_units"], parsed["enemy_units"], self.map
 		)
-		print(map_summary)
+		
+		# print(map_summary)
 
 		messages = self._build_initial_messages(orders, faction, map_summary)
 

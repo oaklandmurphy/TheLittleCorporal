@@ -56,7 +56,7 @@ class General:
 			"Given the following battlefield summary and orders from the user, respond with clear, concise orders for your troops.\n"
 			f"Battlefield Summary:\n{map_summary}\n"
 			f"Your response must be in the form of a list of one line, direct orders to each of the following {len(self.unit_list)} units ({', '.join([unit.name for unit in self.unit_list])}) and nothing else.\n"
-			"You should reference a location on the battlefield when giving orders."
+			f"You should reference exactly one location on the battlefield in each of your {len(self.unit_list)} orders."
 		)
 
 		prompt = f"Your orders are: {player_instructions}\n"
