@@ -178,8 +178,8 @@ def main():
 
 	# Setup generals
 	generals = {
-		"French": General(unit_list=game_map.get_units_by_faction("French"), faction="French", model=gen_model, identity_prompt=blue_general_preset, ollama_host=host), 
-		"Austrian": General(unit_list=game_map.get_units_by_faction("Austrian"), faction="Austrian", model=gen_model, identity_prompt=yellow_general_preset, ollama_host=host)
+		"French": General(unit_list=game_map.get_units_by_faction("French"), faction="French", model=gen_model, identity_prompt=blue_general_preset, ollama_host=host, game_map=game_map), 
+		"Austrian": General(unit_list=game_map.get_units_by_faction("Austrian"), faction="Austrian", model=gen_model, identity_prompt=yellow_general_preset, ollama_host=host, game_map=game_map)
 	}
 	
 	# Staff officers that translate orders into concrete moves via tools
