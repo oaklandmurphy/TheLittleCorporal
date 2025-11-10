@@ -101,8 +101,7 @@ class TurnManager:
                 
                 # Staff officer executes orders
                 applied = staff_officer.process_orders(
-                    general_response, 
-                    map_summary=map_summary_so, 
+                    general_response,
                     faction=current_faction, 
                     max_retries=max_retries
                 )

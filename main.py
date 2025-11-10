@@ -109,29 +109,29 @@ def create_demo_map() -> Map:
 	b1 = Infantry("Brigade Friant", "French", blue_division, blue_corps, mobility=3, size=8, quality=3, morale=7)
 	b2 = Infantry("Brigade Gudin", "French", blue_division, blue_corps, mobility=3, size=7, quality=3, morale=6)
 	b3 = Infantry("Brigade Morand", "French", blue_division, blue_corps, mobility=3, size=5, quality=4, morale=8)
-	b4 = Infantry("Brigade Petit", "French", blue_division, blue_corps, mobility=3, size=4, quality=4, morale=6)
-	b5 = Infantry("Brigade Desvaux", "French", blue_division, blue_corps, mobility=3, size=4, quality=2, morale=5)
+	# b4 = Infantry("Brigade Petit", "French", blue_division, blue_corps, mobility=3, size=4, quality=4, morale=6)
+	# b5 = Infantry("Brigade Desvaux", "French", blue_division, blue_corps, mobility=3, size=4, quality=2, morale=5)
 
 	# Yellow forces (Austrian brigadier generals)
 	r1 = Infantry("Brigade Klenau", "Austrian", yellow_division, yellow_corps, mobility=3, size=8, quality=3, morale=7)
 	r2 = Infantry("Brigade Hohenlohe", "Austrian", yellow_division, yellow_corps, mobility=3, size=6, quality=4, morale=8)
 	r3 = Infantry("Brigade Vincent", "Austrian", yellow_division, yellow_corps, mobility=3, size=4, quality=4, morale=6)
-	r4 = Infantry("Brigade Lichtenstein", "Austrian", yellow_division, yellow_corps, mobility=3, size=6, quality=4, morale=7)
-	r5 = Infantry("Brigade Vukassovich", "Austrian", yellow_division, yellow_corps, mobility=3, size=5, quality=3, morale=6)
+	# r4 = Infantry("Brigade Lichtenstein", "Austrian", yellow_division, yellow_corps, mobility=3, size=6, quality=4, morale=7)
+	# r5 = Infantry("Brigade Vukassovich", "Austrian", yellow_division, yellow_corps, mobility=3, size=5, quality=3, morale=6)
 
 	# Place Blue units (left/center)
 	game_map.place_unit(b1, 3, 3)
 	game_map.place_unit(b2, 4, 3)
 	game_map.place_unit(b3, 3, 2)
-	game_map.place_unit(b4, 2, 4)
-	game_map.place_unit(b5, 4, 4)
+	# game_map.place_unit(b4, 2, 4)
+	# game_map.place_unit(b5, 4, 4)
 
 	# Place Yellow units (right/center)
 	game_map.place_unit(r1, 5, 3)
 	game_map.place_unit(r2, 9, 3)
 	game_map.place_unit(r3, 8, 5)
-	game_map.place_unit(r4, 9, 5)
-	game_map.place_unit(r5, 7, 4)
+	# game_map.place_unit(r4, 9, 5)
+	# game_map.place_unit(r5, 7, 4)
 
 	# label features
 	game_map.label_terrain_features(seed=123)
@@ -170,14 +170,11 @@ def main():
 	
 
 	# specify model
-	gen_model = "llama3.2:3b"
+	# gen_model = "llama3.2:3b"
 	so_model = "llama3.2:3b"
-	# model = "llama3.1:8b"
+	gen_model = "llama3.1:8b"
 	# gen_model = "gpt-oss:120b-cloud"
 	# so_model = "llama3.2:3b"
-
-	# Alternate turns between French and Austrian
-	faction_names = ["French", "Austrian"]
 
 	# Setup generals
 	generals = {

@@ -16,6 +16,14 @@ class Hex:
 
 
 class Map:
+    def list_feature_names(self) -> list[str]:
+        """Return a sorted list of all unique feature names present on the map."""
+        features = set()
+        for y in range(self.height):
+            for x in range(self.width):
+                for fname in self.grid[y][x].features:
+                    features.add(fname)
+        return sorted(features)
     def get_feature_coordinates(self, feature_name: str) -> list[tuple[int, int]]:
         """Return a list of (x, y) coordinates that make up the given feature name."""
         coords = []

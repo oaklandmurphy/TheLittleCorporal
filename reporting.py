@@ -306,7 +306,7 @@ def _describe_feature_concise(feature: TerrainFeature) -> str:
     else:
         orientation = "diagonal"
     
-    return f"{name} ({feature.terrain_type}) in {location}, oriented {orientation}"
+    return f"{name} ({feature.terrain_type}) in the {location} of the battlefield, oriented {orientation}"
 
 def _get_unit_attributes(unit) -> str:
     """Extract and format unit attributes (size, quality, morale)."""
