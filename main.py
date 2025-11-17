@@ -188,8 +188,16 @@ def main():
 		"Austrian": StaffOfficer(name=generals["Austrian"].name, unit_list=game_map.get_units_by_faction("Austrian"), game_map=game_map, model=so_model, ollama_host=host),
 	}
 
-	print("santa maria frontline: ", game_map.get_frontline("Santa Maria Heights", "NE"))
-	print("san simone frontline: ", game_map.get_frontline("San Simone Heights", "NE"))
+	frontline_santa_maria = game_map.get_frontline_for_feature("Santa Maria Heights", "NE")
+	frontline_san_simone = game_map.get_frontline_for_feature("San Simone Heights", "NE")
+	frontline_lodi_river = game_map.get_frontline_for_feature("Lodi Stream", "SW")
+	print("get frontline santa maria: ", frontline_santa_maria)
+	print("get frontline san simone: ", frontline_san_simone)
+	print("get frontline lodi river: ", frontline_lodi_river)
+
+	for num_units in range(1, 3 * len(frontline_lodi_river) + 1):
+		print("lodi Frontline " + str(num_units) + " units: ", game_map.distribute_units_along_frontline(frontline_lodi_river, num_units))
+
 	# Run the game loop
 	turn_manager.run_game_loop(
 		vis=vis,

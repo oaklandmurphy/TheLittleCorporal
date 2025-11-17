@@ -20,8 +20,13 @@ class Map:
         """Calculate combat advantage for unit at (x1,y1) against unit at (x2,y2)."""
         hex1 = self.get_hex(x1, y1)
         hex2 = self.get_hex(x2, y2)
-        if not hex1 or not hex2:
-            return 0.0  # No advantage if hexes or units are missing
+        
+        # If the tile in the given direction is not on the map, return -10
+        if not hex2:
+            return -10.0
+        
+        if not hex1:
+            return 0.0  # No advantage if source hex is missing
 
         terrain1 = hex1.terrain
         terrain2 = hex2.terrain
@@ -33,171 +38,292 @@ class Map:
         advantage = offense_mod - defense_mod
         return advantage
 
-    def get_frontline(self, feature_name: str, direction: str) -> List[Tuple[int, int]]:
-        """Compute the best continuous frontline near a feature facing a direction.
+    def get_frontline_endpoints(self, feature_name: str, direction: str) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        """Find two endpoint coordinates for a frontline across a feature.
 
-        This version allows irregular (non-straight) but continuous frontlines, and enforces
-        that the chosen line spans at least from edge to edge of the feature measured along the
-        axis perpendicular to the facing direction.
+        Finds two points near the feature that maximize the perpendicular distance component 
+        (in Cartesian space) relative to the given direction.
 
         Args:
             feature_name: A feature label present in tile.features.
-            direction: One of "E", "W", "NE", "NW", "SE", "SW" indicating enemy-facing.
+            direction: One of "N", "S", "NE", "NW", "SE", "SW" indicating enemy-facing direction.
 
         Returns:
-            A list of (x, y) hex coordinates forming a single continuous line within 2 hexes of the
-            feature that maximizes the sum of get_combat_advantage(tile, tile+direction) and whose
-            span (perpendicular to the facing direction) covers the feature's span. If no such path
-            exists, returns an empty list.
+            A tuple of two (x, y) coordinates: (left_point, right_point), or None if not found.
         """
 
-        # Only these 6 directions are supported. Note: 0,-1 is North; 0,+1 is South
+        valid_dirs = {"N", "S", "NE", "NW", "SE", "SW"}
+        if direction not in valid_dirs:
+            return None
+
+        feature_tiles = self.get_feature_coordinates(feature_name)
+        if not feature_tiles:
+            return None
+
+        # Convert hex coordinates to Cartesian (even-q layout)
+        def hex_to_cartesian(col: int, row: int) -> Tuple[float, float]:
+            """Convert even-q hex coordinates to Cartesian coordinates."""
+            x = col * 1.5
+            y = row * (3**0.5) + (col % 2) * (3**0.5) / 2
+            return x, y
+
+        # Direction unit vectors in Cartesian space
+        import math
+        direction_vectors = {
+            "N": (0, -1),                          # North
+            "S": (0, 1),                           # South
+            "NE": (math.cos(math.pi/6), -math.sin(math.pi/6)),    # 30 degrees
+            "SW": (-math.cos(math.pi/6), math.sin(math.pi/6)),    # 210 degrees
+            "NW": (-math.cos(math.pi/6), -math.sin(math.pi/6)),   # 150 degrees
+            "SE": (math.cos(math.pi/6), math.sin(math.pi/6)),     # -30 degrees
+        }
+
+        # Get the perpendicular vector (rotate 90 degrees)
+        dir_vec = direction_vectors[direction]
+        perp_vec = (-dir_vec[1], dir_vec[0])  # Rotate 90 degrees counterclockwise
+
+        # Get feature center in Cartesian coordinates
+        feature_cart = [hex_to_cartesian(x, y) for x, y in feature_tiles]
+        center_x = sum(p[0] for p in feature_cart) / len(feature_cart)
+        center_y = sum(p[1] for p in feature_cart) / len(feature_cart)
+
+        # Get all candidate tiles near the feature
+        candidate_tiles: List[Tuple[int, int]] = []
+        for y in range(self.height):
+            for x in range(self.width):
+                for fx, fy in feature_tiles:
+                    dist = self._hex_distance(x, y, fx, fy)
+                    if 1 <= dist <= 1:
+                        candidate_tiles.append((x, y))
+                        break
+
+        candidate_tiles = list(set(candidate_tiles))
+
+        if len(candidate_tiles) < 2:
+            return None
+
+        # Project each candidate onto the perpendicular axis
+        projections = []
+        cart_positions = {}  # Store Cartesian positions for distance calculation
+        for col, row in candidate_tiles:
+            cart_x, cart_y = hex_to_cartesian(col, row)
+            cart_positions[(col, row)] = (cart_x, cart_y)
+            # Vector from center to candidate
+            vec_x = cart_x - center_x
+            vec_y = cart_y - center_y
+            # Project onto perpendicular direction (dot product)
+            projection = vec_x * perp_vec[0] + vec_y * perp_vec[1]
+            projections.append((projection, (col, row)))
+
+        # Sort by projection to find extremes
+        projections.sort(key=lambda p: p[0])
+        
+        # Find all points with minimum projection (left side)
+        min_projection = projections[0][0]
+        left_candidates = [p[1] for p in projections if abs(p[0] - min_projection) < 0.0001]
+        
+        # Find all points with maximum projection (right side)
+        max_projection = projections[-1][0]
+        right_candidates = [p[1] for p in projections if abs(p[0] - max_projection) < 0.0001]
+        
+        # If there are ties, use full Cartesian distance as tiebreaker
+        best_pair = None
+        max_distance = -1
+        
+        for left in left_candidates:
+            for right in right_candidates:
+                left_cart = cart_positions[left]
+                right_cart = cart_positions[right]
+                # Calculate full Cartesian distance
+                distance = ((right_cart[0] - left_cart[0])**2 + (right_cart[1] - left_cart[1])**2)**0.5
+                
+                if distance > max_distance:
+                    max_distance = distance
+                    best_pair = (left, right)
+        
+        return best_pair
+
+    def get_frontline_for_feature(self, feature_name: str, direction: str) -> List[Tuple[int, int]]:
+        """Compute the best frontline for a feature facing a direction.
+
+        Combines get_frontline_endpoints and get_frontline to find endpoints and calculate
+        the optimal frontline path based on combat advantage.
+
+        Args:
+            feature_name: A feature label present in tile.features.
+            direction: One of "N", "S", "NE", "NW", "SE", "SW" indicating enemy-facing direction.
+
+        Returns:
+            A list of (x, y) hex coordinates forming the best frontline path.
+            Returns empty list if endpoints cannot be found or no path exists.
+        """
+        
+        # Get the endpoints
+        endpoints = self.get_frontline_endpoints(feature_name, direction)
+        if not endpoints:
+            return []
+        
+        start, goal = endpoints
+        
+        # Calculate the frontline path between endpoints
+        return self.get_frontline(start, goal, direction)
+
+    def distribute_units_along_frontline(self, coordinates: List[Tuple[int, int]], num_units: int) -> List[Tuple[int, int]]:
+        """Take a list of coordinates and return evenly spaced points along them.
+
+        Points are distributed with equal spacing between them and equal margins at the edges.
+        For example, with num_units=2, points are placed at 1/3 and 2/3 of the path length.
+        
+        If num_units exceeds len(coordinates), the function returns all coordinates multiple times
+        and distributes the remainder using the spacing algorithm.
+
+        Args:
+            coordinates: A list of (x, y) tuples representing a path (e.g., output from get_frontline()).
+            num_units: The number of points to return.
+
+        Returns:
+            A list of (x, y) tuples with size equal to num_units, evenly distributed along the path.
+        """
+        if not coordinates:
+            return []
+        
+        if num_units <= 0:
+            return []
+        
+        path_length = len(coordinates)
+        selected = []
+        
+        # Add all coordinates for each complete pass
+        full_passes = num_units // path_length
+        for _ in range(full_passes):
+            selected.extend(coordinates)
+        
+        # Distribute remainder using spacing algorithm
+        remainder = num_units % path_length
+        segment_size = path_length / (remainder + 1)
+        for i in range(1, remainder + 1):
+            index = int(round(i * segment_size))
+            index = min(max(index, 0), path_length - 1)
+            selected.append(coordinates[index])
+        
+        return selected
+
+    def get_frontline(self, start: Tuple[int, int], goal: Tuple[int, int], direction: str) -> List[Tuple[int, int]]:
+        """Compute the best frontline path between two endpoints using A* pathfinding.
+
+        Uses A* to find the path between start and goal that minimizes combat disadvantage 
+        (maximizes advantage) when facing the given direction.
+
+        Args:
+            start: Starting (x, y) coordinate of the frontline.
+            goal: Ending (x, y) coordinate of the frontline.
+            direction: One of "N", "S", "NE", "NW", "SE", "SW" indicating enemy-facing direction.
+
+        Returns:
+            A list of (x, y) hex coordinates forming the best frontline path.
+            Returns empty list if no path exists.
+        """
+
         valid_dirs = {"N", "S", "NE", "NW", "SE", "SW"}
         if direction not in valid_dirs:
             return []
 
-        feature_tiles = set(self.get_feature_coordinates(feature_name))
-        if not feature_tiles:
-            return []
-
-        # Neighbor in hex direction using even-q (column offset) layout with N,S present.
-        # Enforces N=(0,-1), S=(0,+1) across both parities.
+        # Neighbor in hex direction using even-q layout
         def hex_neighbors_dir(x: int, y: int, dir_name: str) -> Tuple[int, int]:
             if x % 2 == 0:  # even column
                 deltas = {
-                    "N":  (0, -1),
-                    "S":  (0, +1),
-                    "NE": (+1, -1),
-                    "NW": (-1, -1),
-                    "SE": (+1, 0),
-                    "SW": (-1, 0),
+                    "N":  (0, -1), "S":  (0, +1),
+                    "NE": (+1, -1), "NW": (-1, -1),
+                    "SE": (+1, 0), "SW": (-1, 0),
                 }
             else:  # odd column
                 deltas = {
-                    "N":  (0, -1),
-                    "S":  (0, +1),
-                    "NE": (+1, 0),
-                    "NW": (-1, 0),
-                    "SE": (+1, +1),
-                    "SW": (-1, +1),
+                    "N":  (0, -1), "S":  (0, +1),
+                    "NE": (+1, 0), "NW": (-1, 0),
+                    "SE": (+1, +1), "SW": (-1, +1),
                 }
             dx, dy = deltas[dir_name]
             return x + dx, y + dy
 
-        def to_cube(x: int, y: int) -> Tuple[int, int, int]:
-            # Consistent with _hex_distance conversion (even-q, column offset)
-            q = x
-            r = y - (x - (x & 1)) // 2
-            s = -q - r
-            return q, r, s
+        # A* pathfinding with cost = negative combat advantage (we minimize cost, maximize advantage)
+        def heuristic(p: Tuple[int, int]) -> float:
+            return float(self._hex_distance(p[0], p[1], goal[0], goal[1]))
 
-        # Choose span (perpendicular) coordinate and a lateral tiebreaker to build a DAG
-        # Mapping based on cube coordinates:
-        # - Lines parallel to E/W have constant s -> perpendicular span uses s
-        # - Lines parallel to NE/SW have constant r -> perpendicular span uses r
-        # - Lines parallel to NW/SE have constant q -> perpendicular span uses q
-        def span_and_lateral(x: int, y: int) -> Tuple[int, int]:
-            q, r, s = to_cube(x, y)
-            # Perpendicular span coordinate to the facing direction:
-            # - N/S  : span by q (columns; left-right across the front)
-            # - NE/SW: span by s (labels NE-parallel lines)
-            # - NW/SE: span by r (labels E-W rows, perpendicular to NW/SE axis)
-            if direction in ("N", "S"):
-                return q, r  # span by q, tie-break by r
-            if direction in ("NE", "SW"):
-                return s, r  # span by s, tie-break by r
-            # direction in ("NW", "SE")
-            return r, q      # span by r, tie-break by q
+        def get_perpendicular_dirs(dir_name: str) -> Tuple[str, str]:
+            """Get the two perpendicular directions (left and right) for a given direction."""
+            # Map each direction to its perpendicular directions
+            perp_map = {
+                "N": ("NW", "NE"),
+                "S": ("SE", "SW"),
+                "NE": ("N", "SE"),
+                "NW": ("SW", "N"),
+                "SE": ("NE", "S"),
+                "SW": ("S", "NW"),
+            }
+            return perp_map[dir_name]
 
-        def hex_distance(a: Tuple[int, int], b: Tuple[int, int]) -> int:
-            return self._hex_distance(a[0], a[1], b[0], b[1])
-
-        # Allowed tiles: within 2 hexes of any feature tile
-        allowed: Set[Tuple[int, int]] = set()
-        for y in range(self.height):
-            for x in range(self.width):
-                here = (x, y)
-                for fx, fy in feature_tiles:
-                    if hex_distance(here, (fx, fy)) <= 2:
-                        allowed.add(here)
-                        break
-
-        if not allowed:
-            return []
-
-        # Compute tile weights = combat advantage when facing the given direction
-        weight: dict[Tuple[int, int], float] = {}
-        for (x, y) in allowed:
+        def get_cost(x: int, y: int) -> float:
+            """Cost to be at position (x,y). Lower is better, so negate combat advantage.
+            Includes 1/3 of the combat advantage from adjacent tiles perpendicular to the direction."""
+            # Get combat advantage in the main direction
             nx, ny = hex_neighbors_dir(x, y, direction)
-            weight[(x, y)] = float(self.get_combat_advantage(x, y, nx, ny))
+            advantage = self.get_combat_advantage(x, y, nx, ny)
+            
+            # Get combat advantage from perpendicular tiles
+            left_dir, right_dir = get_perpendicular_dirs(direction)
+            
+            # # Left side contribution
+            # left_x, left_y = hex_neighbors_dir(x, y, left_dir)
+            # if 0 <= left_x < self.width and 0 <= left_y < self.height:
+            #     left_enemy_x, left_enemy_y = hex_neighbors_dir(left_x, left_y, direction)
+            #     left_advantage = self.get_combat_advantage(left_x, left_y, left_enemy_x, left_enemy_y)
+            #     advantage += left_advantage / 3.0
+            
+            # # Right side contribution
+            # right_x, right_y = hex_neighbors_dir(x, y, right_dir)
+            # if 0 <= right_x < self.width and 0 <= right_y < self.height:
+            #     right_enemy_x, right_enemy_y = hex_neighbors_dir(right_x, right_y, direction)
+            #     right_advantage = self.get_combat_advantage(right_x, right_y, right_enemy_x, right_enemy_y)
+            #     advantage += right_advantage / 3.0
+            
+            return -advantage  # Negate so A* minimizes cost = maximizes advantage
 
-        # Compute feature span along the perpendicular coordinate
-        feature_span_vals = [span_and_lateral(x, y)[0] for (x, y) in feature_tiles]
-        min_span = min(feature_span_vals)
-        max_span = max(feature_span_vals)
+        # A* implementation
+        open_set = []
+        heapq.heappush(open_set, (0.0, start))
+        came_from: dict[Tuple[int, int], Optional[Tuple[int, int]]] = {}
+        g_score: dict[Tuple[int, int], float] = {start: get_cost(start[0], start[1])}
+        f_score: dict[Tuple[int, int], float] = {start: g_score[start] + heuristic(start)}
 
-        # Precompute span/lateral for allowed tiles
-        span_coord: dict[Tuple[int, int], int] = {}
-        lateral_coord: dict[Tuple[int, int], int] = {}
-        for p in allowed:
-            sc, lc = span_and_lateral(p[0], p[1])
-            span_coord[p] = sc
-            lateral_coord[p] = lc
+        while open_set:
+            _, current = heapq.heappop(open_set)
 
-        # Start and end sets must cover the feature span
-        start_nodes = [p for p in allowed if span_coord[p] <= min_span]
-        end_nodes = set(p for p in allowed if span_coord[p] >= max_span)
-        if not start_nodes or not end_nodes:
-            return []
+            if current == goal:
+                # Reconstruct path
+                path = []
+                while current in came_from:
+                    path.append(current)
+                    current = came_from[current]
+                path.append(start)
+                path.reverse()
+                return path
 
-        # Build adjacency restricted to allowed tiles
-        neighbors: dict[Tuple[int, int], List[Tuple[int, int]]] = {p: [] for p in allowed}
-        for (x, y) in allowed:
-            for nx, ny in self.get_neighbors(x, y):
-                if (nx, ny) in allowed:
-                    neighbors[(x, y)].append((nx, ny))
+            for nx, ny in self.get_neighbors(current[0], current[1]):
+                neighbor = (nx, ny)
+                # Allow all valid map positions
+                if not (0 <= nx < self.width and 0 <= ny < self.height):
+                    continue
 
-        # Dynamic programming over a DAG induced by ordering (span, lateral)
-        nodes_sorted = sorted(allowed, key=lambda p: (span_coord[p], lateral_coord[p]))
-        neg_inf = float("-inf")
-        best_score: dict[Tuple[int, int], float] = {p: neg_inf for p in allowed}
-        parent: dict[Tuple[int, int], Optional[Tuple[int, int]]] = {p: None for p in allowed}
+                tentative_g = g_score[current] + get_cost(nx, ny)
 
-        for p in nodes_sorted:
-            if p in start_nodes:
-                # starting at p
-                if weight[p] > best_score[p]:
-                    best_score[p] = weight[p]
-                    parent[p] = None
+                if neighbor not in g_score or tentative_g < g_score[neighbor]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g
+                    f_score[neighbor] = tentative_g + heuristic(neighbor)
+                    heapq.heappush(open_set, (f_score[neighbor], neighbor))
 
-            # Relax edges forward only if they increase (span, lateral)
-            for v in neighbors[p]:
-                sp, sl = span_coord[p], lateral_coord[p]
-                sv, lv = span_coord[v], lateral_coord[v]
-                if (sv > sp) or (sv == sp and lv > sl):
-                    if best_score[p] + weight[v] > best_score[v]:
-                        best_score[v] = best_score[p] + weight[v]
-                        parent[v] = p
-
-        # Pick best end node
-        best_end = None
-        best_end_score = neg_inf
-        for e in end_nodes:
-            if best_score[e] > best_end_score:
-                best_end_score = best_score[e]
-                best_end = e
-
-        if best_end is None or best_end_score == neg_inf:
-            return []
-
-        # Reconstruct path from best_end
-        path: List[Tuple[int, int]] = []
-        cur = best_end
-        while cur is not None:
-            path.append(cur)
-            cur = parent[cur]
-        path.reverse()
-        return path
+        # No path found
+        return []
 
     def list_feature_names(self) -> list[str]:
         """Return a sorted list of all unique feature names present on the map."""
