@@ -14,7 +14,7 @@ def create_demo_map() -> Map:
 	w, h = 12, 9
 	game_map = Map(w, h)
 	import random
-	random.seed(42)
+	random.seed(69)
 
 	# --- Helpers ---
 	def in_bounds(x, y):
@@ -71,7 +71,7 @@ def create_demo_map() -> Map:
 			nx, ny = frontier.pop(0)
 			if is_river(nx, ny):
 				continue
-			set_if_not_river(nx, ny, FOREST)
+			set_if_not_river(nx, ny, FOREST())
 			placed += 1
 			for (qx, qy) in game_map.get_neighbors(nx, ny):
 				if in_bounds(qx, qy) and (qx, qy) not in visited and random.random() < 0.7:
@@ -188,6 +188,8 @@ def main():
 		"Austrian": StaffOfficer(name=generals["Austrian"].name, unit_list=game_map.get_units_by_faction("Austrian"), game_map=game_map, model=so_model, ollama_host=host),
 	}
 
+	print("santa maria frontline: ", game_map.get_frontline("Santa Maria Heights", "NE"))
+	print("san simone frontline: ", game_map.get_frontline("San Simone Heights", "NE"))
 	# Run the game loop
 	turn_manager.run_game_loop(
 		vis=vis,

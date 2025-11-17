@@ -148,7 +148,90 @@ class General:
 		try:
 			if tool_name == "reconnaissance_feature":
 				feature_name = args.get("feature_name", "")
-				description = self.game_map.describe_feature(feature_name)
+				coords = self.game_map.get_feature_coordinates(feature_name)
+				if not coords:
+					return {"ok": False, "error": f"No feature named '{feature_name}' found."}
+
+				# Use a battlefield scale for reporting distances in meters
+				# Assumption: 1 hex ≈ 100 meters (common operational scale). Adjust if your project uses a different scale.
+				METERS_PER_HEX = 100
+				NEAR_RADIUS_METERS = 300  # report units within ~3 hexes as nearby
+				near_radius_hex = max(1, int(round(NEAR_RADIUS_METERS / METERS_PER_HEX)))
+
+				# Determine predominant terrain type for the feature
+				terrain_count = {}
+				for x, y in coords:
+					tname = self.game_map.grid[y][x].terrain.name
+					terrain_count[tname] = terrain_count.get(tname, 0) + 1
+				terrain_type = max(terrain_count, key=terrain_count.get)
+
+				# Compute a simple center of the feature for distance phrasing
+				cx = int(sum(x for x, _ in coords) / len(coords))
+				cy = int(sum(y for _, y in coords) / len(coords))
+
+				# Units located on the feature
+				units_on = []
+				for x, y in coords:
+					u = self.game_map.grid[y][x].unit
+					if u:
+						units_on.append(u)
+
+				# Units near the feature (within NEAR_RADIUS_METERS but not on it)
+				units_near: list[dict] = []
+				seen_units = set()
+				for yy in range(self.game_map.height):
+					for xx in range(self.game_map.width):
+						u = self.game_map.grid[yy][xx].unit
+						if not u:
+							continue
+						# Skip if the unit is already counted as being on the feature
+						if u in units_on:
+							continue
+						if id(u) in seen_units:
+							continue
+						# Compute minimum hex distance from the unit to any tile of the feature
+						min_d = float('inf')
+						for fx, fy in coords:
+							d = self.game_map._hex_distance(xx, yy, fx, fy)
+							if d < min_d:
+								min_d = d
+						# Consider as nearby if within threshold and not on the feature
+						if 0 < min_d <= near_radius_hex:
+							units_near.append({
+								"unit": u,
+								"distance_m": int(min_d * METERS_PER_HEX)
+							})
+							seen_units.add(id(u))
+
+				# Compose description without mentioning hexes or grid coordinates
+				desc_lines = []
+				desc_lines.append(f"Feature '{feature_name}':")
+				desc_lines.append(f"  Terrain: {terrain_type}")
+
+				if units_on:
+					# Group by faction for readability
+					by_faction = {}
+					for u in units_on:
+						by_faction.setdefault(u.faction, []).append(u.name)
+					parts = []
+					for fac, names in sorted(by_faction.items()):
+						parts.append(f"{fac}: {', '.join(sorted(names))}")
+					desc_lines.append("  Units present: " + "; ".join(parts))
+				else:
+					desc_lines.append("  Units present: None")
+
+				if units_near:
+					# Sort by increasing distance
+					units_near.sort(key=lambda e: (e["distance_m"], e["unit"].faction, e["unit"].name))
+					near_parts = [
+						f"{e['unit'].name} ({e['unit'].faction}) approximately {e['distance_m']} meters away"
+						for e in units_near
+					]
+					desc_lines.append("  Nearby units: " + "; ".join(near_parts))
+				else:
+					desc_lines.append(f"  Nearby units: None within {NEAR_RADIUS_METERS} meters")
+
+				description = "\n".join(desc_lines)
 				return {"ok": True, "intelligence": description}
 
 			elif tool_name == "assess_enemy_strength":
@@ -158,7 +241,7 @@ class General:
 				if not coords:
 					return {"ok": False, "error": f"Unknown location: {location}"}
 				
-				# Find enemy units within 3 hexes of the feature
+				# Find enemy units within 2 hexes of the feature
 				enemy_units = []
 				for y in range(self.game_map.height):
 					for x in range(self.game_map.width):
@@ -167,11 +250,11 @@ class General:
 							# Check if within 3 hexes of any feature coordinate
 							for fx, fy in coords:
 								dist = self.game_map._hex_distance(x, y, fx, fy)
-								if dist <= 3:
+								if dist <= 2:
 									enemy_units.append({
 										"name": unit.name,
 										"position": (x, y),
-										"strength": unit.strength,
+										"size": unit.size,
 										"quality": unit.quality,
 										"morale": unit.morale,
 										"distance_from_location": dist
@@ -196,37 +279,237 @@ class General:
 				if not coords:
 					return {"ok": False, "error": f"Unknown feature: {target_feature}"}
 				
-				# Analyze terrain around the feature
+				# Calculate average position of units under command
+				if not self.unit_list:
+					return {"ok": False, "error": "No units under command"}
+				
+				avg_x = sum(unit.x for unit in self.unit_list if unit.x is not None) / len([u for u in self.unit_list if u.x is not None])
+				avg_y = sum(unit.y for unit in self.unit_list if unit.y is not None) / len([u for u in self.unit_list if u.y is not None])
+				avg_pos = (int(avg_x), int(avg_y))
+				
+				# Calculate target center position
+				target_x = sum(x for x, y in coords) / len(coords)
+				target_y = sum(y for x, y in coords) / len(coords)
+				target_center = (int(target_x), int(target_y))
+
+				# How many features to highlight
+				top_n_features = 3
+				
+				# Helper function to get cardinal direction from target perspective
+				def get_cardinal_direction(from_x, from_y, to_x, to_y):
+					"""Get cardinal direction of 'to' point relative to 'from' point"""
+					dx = to_x - from_x
+					dy = to_y - from_y
+					
+					# Normalize for hex grid (even-q offset coordinates)
+					# In hex grids, vertical is clearer than horizontal
+					abs_dx = abs(dx)
+					abs_dy = abs(dy)
+					
+					# Determine primary and secondary directions
+					primary = ""
+					secondary = ""
+					
+					# Vertical direction (north/south)
+					if abs_dy > abs_dx * 0.5:  # Primarily vertical
+						if dy < 0:
+							primary = "north"
+						else:
+							primary = "south"
+						# Add east/west if significant horizontal component
+						if abs_dx > abs_dy * 0.3:
+							if dx > 0:
+								secondary = "east"
+							else:
+								secondary = "west"
+					else:  # Primarily horizontal
+						if dx > 0:
+							primary = "east"
+						else:
+							primary = "west"
+						# Add north/south if significant vertical component
+						if abs_dy > abs_dx * 0.3:
+							if dy < 0:
+								secondary = "north"
+							else:
+								secondary = "south"
+					
+					if secondary:
+						return f"{secondary}{primary}ern"
+					else:
+						return primary + "ern" if primary in ["north", "south", "east", "west"] else primary
+
+				# Helper: get enemy units near a set of coordinates (within N hexes)
+				def get_enemy_near_coords(coord_list, max_distance=3):
+					enemy_units = []
+					for y in range(self.game_map.height):
+						for x in range(self.game_map.width):
+							unit = self.game_map.grid[y][x].unit
+							if unit and unit.faction != self.faction:
+
+								# compute nearest distance to the feature
+								min_dist = float('inf')
+								for fx, fy in coord_list:
+									d = self.game_map._hex_distance(x, y, fx, fy)
+									if d < min_dist:
+										min_dist = d
+
+								if min_dist <= max_distance:
+
+									enemy_units.append({
+										"name": unit.name,
+										"position": (x, y),
+										"strength": unit.strength,
+										"quality": unit.quality,
+										"morale": unit.morale,
+										"distance": min_dist
+									})
+					return enemy_units
+				
 				survey = f"Approach survey for {target_feature}:\n"
-				survey += f"Feature location: {coords}\n"
+				survey += f"Your forces are positioned at approximately ({avg_pos[0]}, {avg_pos[1]})\n"
+				survey += f"Target feature '{target_feature}' is centered at ({target_center[0]}, {target_center[1]})\n\n"
 				
-				# Check adjacent hexes for terrain and obstacles
-				adjacent_hexes = set()
-				for fx, fy in coords:
-					for nx, ny in self.game_map.get_neighbors(fx, fy):
+				# Trace a path from average position to target
+				# Use simple line drawing algorithm adapted for hex grid
+				path_hexes = []
+				current_x, current_y = avg_pos
+				
+				# Build path by moving toward target
+				max_steps = 50  # Prevent infinite loops
+				steps = 0
+				visited = set()
+				visited.add((current_x, current_y))
+				
+				while steps < max_steps and (current_x, current_y) not in coords:
+					steps += 1
+					best_neighbor = None
+					best_distance = float('inf')
+					
+					# Find neighbor closest to target
+					for nx, ny in self.game_map.get_neighbors(current_x, current_y):
 						if 0 <= nx < self.game_map.width and 0 <= ny < self.game_map.height:
-							if (nx, ny) not in coords:
-								adjacent_hexes.add((nx, ny))
+							if (nx, ny) not in visited:
+								dist = self.game_map._hex_distance(nx, ny, target_center[0], target_center[1])
+								if dist < best_distance:
+									best_distance = dist
+									best_neighbor = (nx, ny)
+					
+					if best_neighbor is None:
+						break
+					
+					current_x, current_y = best_neighbor
+					visited.add((current_x, current_y))
+					path_hexes.append((current_x, current_y))
 				
-				terrain_counts = {}
-				blocking_units = []
-				for ax, ay in adjacent_hexes:
-					terrain = self.game_map.grid[ay][ax].terrain.name
-					terrain_counts[terrain] = terrain_counts.get(terrain, 0) + 1
-					unit = self.game_map.grid[ay][ax].unit
-					if unit and unit.faction != self.faction:
-						blocking_units.append(f"{unit.name} at ({ax},{ay})")
+				# Analyze terrain along the path
+				survey += f"Terrain along approach path ({len(path_hexes)} hexes):\n"
+				terrain_summary = {}
+				for px, py in path_hexes:
+					terrain = self.game_map.grid[py][px].terrain.name
+					terrain_summary[terrain] = terrain_summary.get(terrain, 0) + 1
 				
-				survey += "Adjacent terrain:\n"
-				for terrain, count in terrain_counts.items():
-					survey += f"  - {count} {terrain} hex(es)\n"
+				for terrain_type, count in sorted(terrain_summary.items(), key=lambda x: -x[1]):
+					survey += f"  - {count} {terrain_type} hex(es)\n"
+
+				# Build a map of all features -> list of coordinates (used for size and proximity checks)
+				all_features = {}
+				for y in range(self.game_map.height):
+					for x in range(self.game_map.width):
+						for feature in self.game_map.grid[y][x].features:
+							if feature not in all_features:
+								all_features[feature] = []
+							all_features[feature].append((x, y))
+
+				# Identify features along the path, then pick only the largest few and describe nearby enemies
+				features_along_path = set()
+				for px, py in path_hexes:
+					for feature in self.game_map.grid[py][px].features:
+						features_along_path.add(feature)
+
+				if features_along_path:
+					sized_path_features = [
+						(feature, len(all_features.get(feature, [])))
+						for feature in features_along_path
+						if feature != target_feature
+					]
+					sized_path_features.sort(key=lambda kv: kv[1], reverse=True)
+					selected_path_features = sized_path_features[:top_n_features]
+					if selected_path_features:
+						survey += f"\nKey features along the approach (largest first):\n"
+						for feature, size in selected_path_features:
+							coords_list = all_features.get(feature, [])
+							enemy_units = get_enemy_near_coords(coords_list, max_distance=3)
+							if enemy_units:
+								# Build enemy summary
+								enemy_summary = f"Detected {len(enemy_units)} enemy unit(s):\n"
+								for eu in sorted(enemy_units, key=lambda e: e["distance"]):
+									enemy_summary += (
+										f"      * {eu['name']} at ({eu['position'][0]},{eu['position'][1]}) - "
+										f"Str {eu['strength']}, Qlty {eu['quality']}, Mor {eu['morale']}, {eu['distance']} hexes away\n"
+									)
+							else:
+								enemy_summary = "No enemy units detected within 3 hexes.\n"
+							survey += f"  - {feature} ({size} hexes):\n{enemy_summary}"
 				
-				if blocking_units:
-					survey += "Enemy units blocking approaches:\n"
-					for bu in blocking_units:
-						survey += f"  - {bu}\n"
+				# Identify flanking features
+				# Look for features perpendicular to the approach vector
+				survey += f"\nFlanking features:\n"
+
+				# Identify flanking features (not on the direct path but near it)
+				flanking_features = {}
+				for feature_name, feature_coords in all_features.items():
+					if feature_name == target_feature or feature_name in features_along_path:
+						continue  # Skip target and features directly on path
+					
+					# Calculate average distance to path
+					min_dist_to_path = float('inf')
+					feature_center_x = sum(x for x, y in feature_coords) / len(feature_coords)
+					feature_center_y = sum(y for x, y in feature_coords) / len(feature_coords)
+					
+					for px, py in path_hexes:
+						dist = self.game_map._hex_distance(int(feature_center_x), int(feature_center_y), px, py)
+						min_dist_to_path = min(min_dist_to_path, dist)
+					
+					# Consider as flanking feature if within 3 hexes of path
+					if min_dist_to_path <= 2:
+						# Get direction relative to target
+						direction = get_cardinal_direction(
+							target_center[0], target_center[1],
+							int(feature_center_x), int(feature_center_y)
+						)
+						
+						# Get terrain type of the feature
+						terrain_type = self.game_map.grid[int(feature_center_y)][int(feature_center_x)].terrain.name.lower()
+						
+						flanking_features[feature_name] = {
+							"direction": direction,
+							"distance": min_dist_to_path,
+							"terrain": terrain_type,
+							"size": len(feature_coords),
+							"coords": feature_coords
+						}
+				
+				if flanking_features:
+					# Choose the largest few flanking features
+					selected_flanks = sorted(flanking_features.items(), key=lambda kv: kv[1]["size"], reverse=True)[:top_n_features]
+					for feature_name, info in selected_flanks:
+						enemy_units = get_enemy_near_coords(info["coords"], max_distance=3)
+						if enemy_units:
+							enemy_summary = f"Detected {len(enemy_units)} enemy unit(s):\n"
+							for eu in sorted(enemy_units, key=lambda e: e["distance"]):
+								enemy_summary += (
+									f"      * {eu['name']} at ({eu['position'][0]},{eu['position'][1]}) - "
+									f"Str {eu['strength']}, Qlty {eu['quality']}, Mor {eu['morale']}, {eu['distance']} hexes away\n"
+								)
+						else:
+							enemy_summary = "No enemy units detected within 3 hexes.\n"
+						survey += (
+							f"  - {feature_name} ({info['size']} hexes), {info['terrain']} on the {info['direction']} flank "
+							f"({info['distance']} hexes from approach):\n{enemy_summary}"
+						)
 				else:
-					survey += "No enemy units immediately adjacent.\n"
+					survey += "  No significant flanking features detected.\n"
 				
 				return {"ok": True, "intelligence": survey}
 
@@ -294,6 +577,7 @@ class General:
 			"CRITICAL REQUIREMENT:\n"
 			"You MUST use reconnaissance tools to gather intelligence before issuing orders.\n"
 			"Call 2-4 reconnaissance tools to investigate the features mentioned in your plan.\n\n"
+			"You may call the same tool with a different feature/location multiple times if needed.\n\n"
 			"Available tools:\n"
 			"- reconnaissance_feature: Get detailed info about a specific terrain feature\n"
 			"- assess_enemy_strength: Analyze enemy forces near a location\n"

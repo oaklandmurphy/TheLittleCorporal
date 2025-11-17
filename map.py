@@ -16,6 +16,189 @@ class Hex:
 
 
 class Map:
+    def get_combat_advantage(self, x1, y1, x2, y2) -> float:
+        """Calculate combat advantage for unit at (x1,y1) against unit at (x2,y2)."""
+        hex1 = self.get_hex(x1, y1)
+        hex2 = self.get_hex(x2, y2)
+        if not hex1 or not hex2:
+            return 0.0  # No advantage if hexes or units are missing
+
+        terrain1 = hex1.terrain
+        terrain2 = hex2.terrain
+
+        offense_mod = terrain1.getOffenseModifier(terrain2.elevation)
+        defense_mod = terrain2.getDefenseModifier()
+
+        # Simple formula: offense modifier minus defense modifier
+        advantage = offense_mod - defense_mod
+        return advantage
+
+    def get_frontline(self, feature_name: str, direction: str) -> List[Tuple[int, int]]:
+        """Compute the best continuous frontline near a feature facing a direction.
+
+        This version allows irregular (non-straight) but continuous frontlines, and enforces
+        that the chosen line spans at least from edge to edge of the feature measured along the
+        axis perpendicular to the facing direction.
+
+        Args:
+            feature_name: A feature label present in tile.features.
+            direction: One of "E", "W", "NE", "NW", "SE", "SW" indicating enemy-facing.
+
+        Returns:
+            A list of (x, y) hex coordinates forming a single continuous line within 2 hexes of the
+            feature that maximizes the sum of get_combat_advantage(tile, tile+direction) and whose
+            span (perpendicular to the facing direction) covers the feature's span. If no such path
+            exists, returns an empty list.
+        """
+
+        # Only these 6 directions are supported. Note: 0,-1 is North; 0,+1 is South
+        valid_dirs = {"N", "S", "NE", "NW", "SE", "SW"}
+        if direction not in valid_dirs:
+            return []
+
+        feature_tiles = set(self.get_feature_coordinates(feature_name))
+        if not feature_tiles:
+            return []
+
+        # Neighbor in hex direction using even-q (column offset) layout with N,S present.
+        # Enforces N=(0,-1), S=(0,+1) across both parities.
+        def hex_neighbors_dir(x: int, y: int, dir_name: str) -> Tuple[int, int]:
+            if x % 2 == 0:  # even column
+                deltas = {
+                    "N":  (0, -1),
+                    "S":  (0, +1),
+                    "NE": (+1, -1),
+                    "NW": (-1, -1),
+                    "SE": (+1, 0),
+                    "SW": (-1, 0),
+                }
+            else:  # odd column
+                deltas = {
+                    "N":  (0, -1),
+                    "S":  (0, +1),
+                    "NE": (+1, 0),
+                    "NW": (-1, 0),
+                    "SE": (+1, +1),
+                    "SW": (-1, +1),
+                }
+            dx, dy = deltas[dir_name]
+            return x + dx, y + dy
+
+        def to_cube(x: int, y: int) -> Tuple[int, int, int]:
+            # Consistent with _hex_distance conversion (even-q, column offset)
+            q = x
+            r = y - (x - (x & 1)) // 2
+            s = -q - r
+            return q, r, s
+
+        # Choose span (perpendicular) coordinate and a lateral tiebreaker to build a DAG
+        # Mapping based on cube coordinates:
+        # - Lines parallel to E/W have constant s -> perpendicular span uses s
+        # - Lines parallel to NE/SW have constant r -> perpendicular span uses r
+        # - Lines parallel to NW/SE have constant q -> perpendicular span uses q
+        def span_and_lateral(x: int, y: int) -> Tuple[int, int]:
+            q, r, s = to_cube(x, y)
+            # Perpendicular span coordinate to the facing direction:
+            # - N/S  : span by q (columns; left-right across the front)
+            # - NE/SW: span by s (labels NE-parallel lines)
+            # - NW/SE: span by r (labels E-W rows, perpendicular to NW/SE axis)
+            if direction in ("N", "S"):
+                return q, r  # span by q, tie-break by r
+            if direction in ("NE", "SW"):
+                return s, r  # span by s, tie-break by r
+            # direction in ("NW", "SE")
+            return r, q      # span by r, tie-break by q
+
+        def hex_distance(a: Tuple[int, int], b: Tuple[int, int]) -> int:
+            return self._hex_distance(a[0], a[1], b[0], b[1])
+
+        # Allowed tiles: within 2 hexes of any feature tile
+        allowed: Set[Tuple[int, int]] = set()
+        for y in range(self.height):
+            for x in range(self.width):
+                here = (x, y)
+                for fx, fy in feature_tiles:
+                    if hex_distance(here, (fx, fy)) <= 2:
+                        allowed.add(here)
+                        break
+
+        if not allowed:
+            return []
+
+        # Compute tile weights = combat advantage when facing the given direction
+        weight: dict[Tuple[int, int], float] = {}
+        for (x, y) in allowed:
+            nx, ny = hex_neighbors_dir(x, y, direction)
+            weight[(x, y)] = float(self.get_combat_advantage(x, y, nx, ny))
+
+        # Compute feature span along the perpendicular coordinate
+        feature_span_vals = [span_and_lateral(x, y)[0] for (x, y) in feature_tiles]
+        min_span = min(feature_span_vals)
+        max_span = max(feature_span_vals)
+
+        # Precompute span/lateral for allowed tiles
+        span_coord: dict[Tuple[int, int], int] = {}
+        lateral_coord: dict[Tuple[int, int], int] = {}
+        for p in allowed:
+            sc, lc = span_and_lateral(p[0], p[1])
+            span_coord[p] = sc
+            lateral_coord[p] = lc
+
+        # Start and end sets must cover the feature span
+        start_nodes = [p for p in allowed if span_coord[p] <= min_span]
+        end_nodes = set(p for p in allowed if span_coord[p] >= max_span)
+        if not start_nodes or not end_nodes:
+            return []
+
+        # Build adjacency restricted to allowed tiles
+        neighbors: dict[Tuple[int, int], List[Tuple[int, int]]] = {p: [] for p in allowed}
+        for (x, y) in allowed:
+            for nx, ny in self.get_neighbors(x, y):
+                if (nx, ny) in allowed:
+                    neighbors[(x, y)].append((nx, ny))
+
+        # Dynamic programming over a DAG induced by ordering (span, lateral)
+        nodes_sorted = sorted(allowed, key=lambda p: (span_coord[p], lateral_coord[p]))
+        neg_inf = float("-inf")
+        best_score: dict[Tuple[int, int], float] = {p: neg_inf for p in allowed}
+        parent: dict[Tuple[int, int], Optional[Tuple[int, int]]] = {p: None for p in allowed}
+
+        for p in nodes_sorted:
+            if p in start_nodes:
+                # starting at p
+                if weight[p] > best_score[p]:
+                    best_score[p] = weight[p]
+                    parent[p] = None
+
+            # Relax edges forward only if they increase (span, lateral)
+            for v in neighbors[p]:
+                sp, sl = span_coord[p], lateral_coord[p]
+                sv, lv = span_coord[v], lateral_coord[v]
+                if (sv > sp) or (sv == sp and lv > sl):
+                    if best_score[p] + weight[v] > best_score[v]:
+                        best_score[v] = best_score[p] + weight[v]
+                        parent[v] = p
+
+        # Pick best end node
+        best_end = None
+        best_end_score = neg_inf
+        for e in end_nodes:
+            if best_score[e] > best_end_score:
+                best_end_score = best_score[e]
+                best_end = e
+
+        if best_end is None or best_end_score == neg_inf:
+            return []
+
+        # Reconstruct path from best_end
+        path: List[Tuple[int, int]] = []
+        cur = best_end
+        while cur is not None:
+            path.append(cur)
+            cur = parent[cur]
+        path.reverse()
+        return path
+
     def list_feature_names(self) -> list[str]:
         """Return a sorted list of all unique feature names present on the map."""
         features = set()
@@ -177,8 +360,8 @@ class Map:
                             continue
                         
                         # Calculate combat power for both units
-                        unit_power = unit.combat_power(self.get_terrain(unit.x, unit.y))
-                        enemy_power = enemy.combat_power(self.get_terrain(enemy.x, enemy.y))
+                        unit_power = 1 # unit.combat_power(self.get_terrain(unit.x, unit.y))
+                        enemy_power = 1 # enemy.combat_power(self.get_terrain(enemy.x, enemy.y))
                         
                         # Apply damage
                         damage_to_enemy = max(1, int(unit_power / 10))
@@ -590,8 +773,8 @@ class Map:
 
     def combat(self, attacker: Unit, defender: Unit):
         """Simple mutual combat."""
-        att_power = attacker.combat_power(self.get_terrain(attacker.x, attacker.y))
-        def_power = defender.combat_power(self.get_terrain(defender.x, defender.y))
+        att_power = 1 # attacker.combat_power(self.get_terrain(attacker.x, attacker.y))
+        def_power = 1 # defender.combat_power(self.get_terrain(defender.x, defender.y))
 
         damage_to_def = max(1, int(att_power / 10))
         damage_to_att = max(1, int(def_power / 10))
@@ -648,11 +831,15 @@ class Map:
             return clusters
 
         # Identify basic type membership
+        from terrain import HILL_ELEVATION_THRESHOLD, FOREST_TREE_COVER_THRESHOLD
+        
         def is_hill(x, y):
-            return self.grid[y][x].terrain.name == "Hill"
+            # Use elevation threshold to classify hills instead of terrain name
+            return self.grid[y][x].terrain.elevation >= HILL_ELEVATION_THRESHOLD
 
         def is_forest(x, y):
-            return self.grid[y][x].terrain.name == "Forest"
+            # Use tree_cover threshold to classify forests instead of terrain name
+            return self.grid[y][x].terrain.tree_cover >= FOREST_TREE_COVER_THRESHOLD
 
         def is_river(x, y):
             return self.grid[y][x].terrain.name == "River"
