@@ -31,10 +31,14 @@ class Unit(ABC):
 		self.has_moved = True
 
 	# --- Combat logic ---
-	def combat_power(self, terrain: Terrain) -> float:
+	def offensive_power(self, terrain_mod) -> float:
 		"""Calculate combat effectiveness."""
-		return (self.size * 0.5 + self.quality * 2 + self.morale) * terrain.combat_modifier
-
+		return (self.size * 0.5 + self.quality * 2 + self.morale) + terrain_mod * 0.5
+	
+	def defensive_power(self, terrain_mod) -> float:
+		"""Calculate combat effectiveness."""
+		return (self.size * 0.5 + self.quality * 2 + self.morale) + terrain_mod * 0.5
+	
 	def take_damage(self, dmg: float):
 		"""Simplified damage resolution."""
 		self.morale = max(0, self.morale - int(dmg))
