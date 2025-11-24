@@ -2,6 +2,20 @@ import ollama
 import json
 import threading
 from typing import Optional, Callable, Dict, Any, List
+from pydantic import BaseModel
+
+# =====================================================
+# PYDANTIC MODELS FOR STRUCTURED OUTPUTS
+# =====================================================
+
+class UnitAssignment(BaseModel):
+	"""Single unit assignment to an action."""
+	unit_name: str
+	action_name: str
+
+class BattlePlanAssignments(BaseModel):
+	"""Complete set of unit assignments for the battle plan."""
+	assignments: List[UnitAssignment]
 
 class General:
 	def __init__(self, faction: str, identity_prompt, unit_list=None, game_map=None, model: str = "llama3.2:3b", ollama_host: str = None):
@@ -135,6 +149,72 @@ class General:
 							}
 						},
 						"required": ["target_feature"]
+					}
+				}
+			}
+		]
+
+	# =====================================================
+	# ACTION DEFINITION TOOLS
+	# =====================================================
+
+	@property
+	def action_definition_tools(self) -> List[Dict[str, Any]]:
+		"""Define tools for the General to define high-level actions."""
+		return [
+			{
+				"type": "function",
+				"function": {
+					"name": "define_action",
+					"description": "Define a high-level tactical action to execute. You should define 1-3 actions total. Examples: 'Attack Santa Maria Heights', 'Support Brigade Gudin', 'Defend the river crossing at Lodi Stream'.",
+					"parameters": {
+						"type": "object",
+						"properties": {
+							"action_name": {
+								"type": "string",
+								"description": "Short name for the action (e.g., 'Attack Heights', 'Support Center', 'Defend River')"
+							},
+							"description": {
+								"type": "string",
+								"description": "Detailed description of what this action entails and its tactical purpose"
+							},
+							"primary_objective": {
+								"type": "string",
+								"description": "The main terrain feature or unit this action focuses on (e.g., 'Santa Maria Heights', 'Brigade Gudin', 'Lodi Stream')"
+							}
+						},
+						"required": ["action_name", "description", "primary_objective"]
+					}
+				}
+			}
+		]
+
+	# =====================================================
+	# UNIT ASSIGNMENT TOOLS
+	# =====================================================
+
+	@property
+	def unit_assignment_tools(self) -> List[Dict[str, Any]]:
+		"""Define tools for assigning units to actions."""
+		return [
+			{
+				"type": "function",
+				"function": {
+					"name": "assign_unit_to_action",
+					"description": "Assign a specific unit to one of the defined actions. Each unit must be assigned to exactly one action.",
+					"parameters": {
+						"type": "object",
+						"properties": {
+							"unit_name": {
+								"type": "string",
+								"description": "Name of the unit to assign (must exactly match one of the units under your command)"
+							},
+							"action_name": {
+								"type": "string",
+								"description": "Name of the action to assign this unit to (must match one of the actions you defined)"
+							}
+						},
+						"required": ["unit_name", "action_name"]
 					}
 				}
 			}
@@ -520,80 +600,161 @@ class General:
 			return {"ok": False, "error": f"Reconnaissance error: {str(e)}"}
 
 	# =====================================================
-	# MULTI-STAGE ORDER GENERATION WITH TOOL FORCING
+	# NEW 7-STEP WORKFLOW WITH TOOL FORCING
 	# =====================================================
 
 	def _query_general_with_tools(self, player_instructions, map_summary, num_thread=4, num_ctx=4096):
 		"""
-		Multi-stage order generation process:
-		1. Generate high-level tactical plan
-		2. Force reconnaissance tool calls to gather intelligence
-		3. Generate specific orders using gathered intelligence
+		New 7-step order generation process:
+		1. System prompt with battlefield overview
+		2. User gives general orders
+		3. General calls reconnaissance tools for information
+		4. General defines 1-3 high-level actions
+		5. General calls more reconnaissance tools
+		6. General receives detailed unit information
+		7. General assigns units to actions and returns JSON
 		"""
 		if player_instructions.strip() == "":
 			player_instructions = "You have received no orders, act according to your best judgement."
 
-		# STAGE 1: High-Level Planning
+		# STEP 1 & 2: Battlefield overview (system prompt) + Player orders (user message)
 		print(f"\n{'='*60}")
-		print(f"[STAGE 1] {self.name} formulating tactical plan...")
+		print(f"[STEP 1-2] {self.name} receiving orders...")
+		print(f"{'='*60}")
+		print(f"Orders: {player_instructions}\n")
+
+		# STEP 3: Initial reconnaissance
+		print(f"{'='*60}")
+		print(f"[STEP 3] {self.name} conducting initial reconnaissance...")
 		print(f"{'='*60}")
 		
-		planning_system = (
+		recon_system_1 = (
 			f"You are {self.name}, do not break character under any circumstances.\n"
 			f"{self.description}\n\n"
-			"TASK: Analyze the battlefield and create a high-level tactical plan.\n"
 			f"Battlefield Summary:\n{map_summary}\n\n"
-			"Your response should:\n"
-			"1. Identify 1-3 key terrain features or objectives relevant to your orders\n"
-			"2. State which features you want to investigate further\n"
-			"3. Outline your general tactical approach\n\n"
-			"Be specific about terrain feature names (e.g., 'Po River', 'San Marco Heights', 'Verde Forest').\n"
-			"Keep your response brief - 3-5 sentences."
-		)
-		
-		planning_prompt = f"Your orders are: {player_instructions}\n\nFormulate your tactical plan:"
-		
-		planning_response = self.client.chat(
-			model=self.model,
-			messages=[
-				{"role": "system", "content": planning_system},
-				{"role": "user", "content": planning_prompt}
-			],
-			options={"num_thread": num_thread, "num_ctx": num_ctx}
-		)
-		
-		tactical_plan = planning_response["message"]["content"].strip()
-		print(f"\n[Tactical Plan]:\n{tactical_plan}\n")
-
-		# STAGE 2: Forced Reconnaissance
-		print(f"{'='*60}")
-		print(f"[STAGE 2] {self.name} conducting reconnaissance...")
-		print(f"{'='*60}")
-		
-		reconnaissance_system = (
-			f"You are {self.name}, conducting battlefield reconnaissance.\n"
-			f"{self.description}\n\n"
-			f"Your tactical plan:\n{tactical_plan}\n\n"
-			"CRITICAL REQUIREMENT:\n"
-			"You MUST use reconnaissance tools to gather intelligence before issuing orders.\n"
-			"Call 2-4 reconnaissance tools to investigate the features mentioned in your plan.\n\n"
-			"You may call the same tool with a different feature/location multiple times if needed.\n\n"
+			f"Your orders: {player_instructions}\n\n"
+			"TASK: Gather intelligence about the battlefield.\n"
+			"Call 2-4 reconnaissance tools to investigate key terrain features or enemy positions.\n"
 			"Available tools:\n"
-			"- reconnaissance_feature: Get detailed info about a specific terrain feature\n"
+			"- reconnaissance_feature: Get detailed info about a terrain feature\n"
 			"- assess_enemy_strength: Analyze enemy forces near a location\n"
 			"- survey_approaches: Identify approach routes to a feature\n\n"
-			"Use ONLY tool calls - no text responses in this phase."
+			"Use ONLY tool calls - no text responses."
 		)
 		
-		messages = [
-			{"role": "system", "content": reconnaissance_system},
-			{"role": "user", "content": "Begin reconnaissance by calling tools to investigate your key features."}
+		messages_recon_1 = [
+			{"role": "system", "content": recon_system_1},
+			{"role": "user", "content": "Begin reconnaissance by calling tools."}
 		]
 		
-		intelligence_gathered = []
-		max_tool_rounds = 5
+		intelligence_1 = self._conduct_reconnaissance_phase(messages_recon_1, num_thread, num_ctx, min_calls=2, max_calls=4)
+
+		# STEP 4: Define 1-3 actions
+		print(f"\n{'='*60}")
+		print(f"[STEP 4] {self.name} defining tactical actions...")
+		print(f"{'='*60}")
 		
-		for round_num in range(max_tool_rounds):
+		intelligence_summary_1 = "\n\n".join(intelligence_1) if intelligence_1 else "No intelligence gathered."
+		
+		actions_system = (
+			f"You are {self.name}, do not break character under any circumstances.\n"
+			f"{self.description}\n\n"
+			f"Your orders: {player_instructions}\n\n"
+			f"INTELLIGENCE GATHERED:\n{intelligence_summary_1}\n\n"
+			"TASK: Define 1-3 high-level tactical actions based on your orders and intelligence.\n"
+			"Examples of actions:\n"
+			"- Attack Santa Maria Heights\n"
+			"- Support Brigade Gudin's advance\n"
+			"- Defend the river crossing at Lodi Stream\n\n"
+			"Call the 'define_action' tool 1-3 times to create your actions.\n"
+			"Use ONLY tool calls - no text responses."
+		)
+		
+		messages_actions = [
+			{"role": "system", "content": actions_system},
+			{"role": "user", "content": "Define your tactical actions now."}
+		]
+		
+		defined_actions = self._define_actions_phase(messages_actions, num_thread, num_ctx)
+
+		# STEP 5: Additional reconnaissance
+		print(f"\n{'='*60}")
+		print(f"[STEP 5] {self.name} conducting detailed reconnaissance...")
+		print(f"{'='*60}")
+		
+		actions_summary = "\n".join([f"- {a['name']}: {a['description']}" for a in defined_actions])
+		
+		recon_system_2 = (
+			f"You are {self.name}, conducting detailed reconnaissance.\n"
+			f"{self.description}\n\n"
+			f"Your orders: {player_instructions}\n\n"
+			f"Your defined actions:\n{actions_summary}\n\n"
+			f"Previous intelligence:\n{intelligence_summary_1}\n\n"
+			"TASK: Gather additional intelligence to support your actions.\n"
+			"Call 1-3 reconnaissance tools to investigate specific details.\n"
+			"Use ONLY tool calls - no text responses."
+		)
+		
+		messages_recon_2 = [
+			{"role": "system", "content": recon_system_2},
+			{"role": "user", "content": "Conduct additional reconnaissance."}
+		]
+		
+		intelligence_2 = self._conduct_reconnaissance_phase(messages_recon_2, num_thread, num_ctx, min_calls=1, max_calls=3)
+
+		# STEP 6: Provide detailed unit information
+		print(f"\n{'='*60}")
+		print(f"[STEP 6] {self.name} reviewing unit dispositions...")
+		print(f"{'='*60}")
+		
+		unit_details = self._get_detailed_unit_info()
+		print(unit_details)
+
+		# STEP 7: Assign units to actions and return JSON
+		print(f"\n{'='*60}")
+		print(f"[STEP 7] {self.name} assigning units to actions...")
+		print(f"{'='*60}")
+		
+		intelligence_summary_2 = "\n\n".join(intelligence_2) if intelligence_2 else "No additional intelligence."
+		all_intelligence = f"{intelligence_summary_1}\n\n{intelligence_summary_2}"
+		
+		assignment_system = (
+			f"You are {self.name}, do not break character under any circumstances.\n"
+			f"{self.description}\n\n"
+			f"Your orders: {player_instructions}\n\n"
+			f"Your defined actions:\n{actions_summary}\n\n"
+			f"All intelligence gathered:\n{all_intelligence}\n\n"
+			f"Your units:\n{unit_details}\n\n"
+			f"TASK: Assign each of your {len(self.unit_list)} units to one of your actions.\n"
+			f"Call 'assign_unit_to_action' exactly {len(self.unit_list)} times - once per unit.\n"
+			"Each unit must be assigned to exactly one action.\n"
+			"Use ONLY tool calls - no text responses."
+		)
+		
+		messages_assignment = [
+			{"role": "system", "content": assignment_system},
+			{"role": "user", "content": "Assign your units to actions now."}
+		]
+		
+		assignments = self._assign_units_phase(messages_assignment, defined_actions, num_thread, num_ctx)
+
+		# Build final JSON output
+		final_output = self._build_json_output(defined_actions, assignments)
+		
+		print(f"\n{'='*60}")
+		print(f"[FINAL OUTPUT] {self.name}'s battle plan:")
+		print(f"{'='*60}")
+		print(json.dumps(final_output, indent=2))
+		print(f"{'='*60}\n")
+		
+		return json.dumps(final_output, indent=2)
+
+	def _conduct_reconnaissance_phase(self, messages, num_thread, num_ctx, min_calls=2, max_calls=5):
+		"""Conduct reconnaissance and gather intelligence."""
+		intelligence_gathered = []
+		max_rounds = max_calls
+		
+		for round_num in range(max_rounds):
 			response = self.client.chat(
 				model=self.model,
 				messages=messages,
@@ -601,15 +762,12 @@ class General:
 				options={"num_thread": num_thread, "num_ctx": num_ctx}
 			)
 			
-			# Check for tool calls
 			msg = response.get("message", {})
 			tool_calls = msg.get("tool_calls") or []
 			
 			if not tool_calls:
-				# LLM has finished reconnaissance
 				break
 			
-			# Execute each tool call
 			for tc in tool_calls:
 				fn = tc.get("function", {})
 				tool_name = fn.get("name", "")
@@ -622,7 +780,6 @@ class General:
 				
 				print(f"\n[Reconnaissance] {tool_name}({args})")
 				
-				# Execute the tool
 				result = self._execute_reconnaissance_tool(tool_name, args)
 				
 				if result.get("ok"):
@@ -633,45 +790,188 @@ class General:
 					error = result.get("error", "Unknown error")
 					print(f"[Error] {error}")
 				
-				# Add tool response to conversation
 				tool_msg = {"role": "tool", "content": json.dumps(result)}
 				if "id" in tc:
 					tool_msg["tool_call_id"] = tc["id"]
 				messages.append(tool_msg)
 			
-			# Stop if we have enough intelligence (2-4 tool calls)
-			if len(intelligence_gathered) >= 2:
+			if len(intelligence_gathered) >= min_calls:
 				break
+		
+		return intelligence_gathered
 
-		# STAGE 3: Generate Specific Orders
-		print(f"\n{'='*60}")
-		print(f"[STAGE 3] {self.name} issuing detailed orders...")
-		print(f"{'='*60}\n")
+	def _define_actions_phase(self, messages, num_thread, num_ctx):
+		"""Have the general define 1-3 tactical actions."""
+		defined_actions = []
+		max_rounds = 5
 		
-		intelligence_summary = "\n\n".join(intelligence_gathered) if intelligence_gathered else "No additional intelligence gathered."
+		for round_num in range(max_rounds):
+			response = self.client.chat(
+				model=self.model,
+				messages=messages,
+				tools=self.action_definition_tools,
+				options={"num_thread": num_thread, "num_ctx": num_ctx}
+			)
+			
+			msg = response.get("message", {})
+			tool_calls = msg.get("tool_calls") or []
+			
+			if not tool_calls:
+				break
+			
+			for tc in tool_calls:
+				fn = tc.get("function", {})
+				tool_name = fn.get("name", "")
+				raw_args = fn.get("arguments", {})
+				
+				try:
+					args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+				except Exception:
+					args = {}
+				
+				if tool_name == "define_action" and len(defined_actions) < 3:
+					action = {
+						"name": args.get("action_name", "Unnamed Action"),
+						"description": args.get("description", ""),
+						"primary_objective": args.get("primary_objective", "")
+					}
+					defined_actions.append(action)
+					print(f"\n[Action Defined] {action['name']}: {action['description']}")
+					
+					result = {"ok": True, "message": f"Action '{action['name']}' defined successfully"}
+				else:
+					result = {"ok": False, "error": "Maximum 3 actions allowed"}
+				
+				tool_msg = {"role": "tool", "content": json.dumps(result)}
+				if "id" in tc:
+					tool_msg["tool_call_id"] = tc["id"]
+				messages.append(tool_msg)
+			
+			if len(defined_actions) >= 1:
+				break
 		
-		orders_system = (
-			f"You are {self.name}, do not break character under any circumstances.\n"
-			f"{self.description}\n\n"
-			f"Your tactical plan:\n{tactical_plan}\n\n"
-			f"INTELLIGENCE GATHERED:\n{intelligence_summary}\n\n"
-			f"Your response must be in the form of a list of one line, direct orders to each of the following {len(self.unit_list)} units ({', '.join([unit.name for unit in self.unit_list])}) and nothing else.\n"
-			"You should reference a specific location on the battlefield when giving orders (use coordinates or feature names from the intelligence).\n"
-			"Base your orders on the intelligence you gathered - be specific and tactical."
+		if not defined_actions:
+			# Fallback: create a default action
+			defined_actions.append({
+				"name": "General Advance",
+				"description": "General advance against enemy positions",
+				"primary_objective": "Enemy forces"
+			})
+		
+		return defined_actions
+
+	def _assign_units_phase(self, messages, defined_actions, num_thread, num_ctx):
+		"""Have the general assign units to actions using structured output."""
+		action_names = [a["name"] for a in defined_actions]
+		unit_names = [u.name for u in self.unit_list]
+		
+		# Build comprehensive prompt for structured output
+		assignment_prompt = (
+			f"You must assign each of your {len(self.unit_list)} units to exactly one action.\n\n"
+			f"Available actions:\n"
+		)
+		for i, action in enumerate(defined_actions, 1):
+			assignment_prompt += f"{i}. {action['name']}: {action['description']}\n"
+		
+		assignment_prompt += f"\nYour units:\n"
+		for i, unit in enumerate(self.unit_list, 1):
+			assignment_prompt += f"{i}. {unit.name}\n"
+		
+		assignment_prompt += (
+			f"\nAssign each unit to one action. Consider tactical factors like:\n"
+			"- Unit position and mobility\n"
+			"- Action objectives and unit capabilities\n"
+			"- Supporting other units\n"
+			"- Concentration of force\n\n"
+			"Provide your assignments now."
 		)
 		
-		orders_prompt = f"Based on your reconnaissance, issue detailed orders to your units:"
+		# Get the last user message content to build complete context
+		system_content = messages[0]["content"] if messages and messages[0]["role"] == "system" else ""
 		
-		final_response = self.client.chat(
-			model=self.model,
-			messages=[
-				{"role": "system", "content": orders_system},
-				{"role": "user", "content": orders_prompt}
-			],
-			options={"num_thread": num_thread, "num_ctx": num_ctx}
-		)
+		try:
+			# Use structured output with Pydantic schema
+			response = self.client.chat(
+				model=self.model,
+				messages=[
+					{"role": "system", "content": system_content},
+					{"role": "user", "content": assignment_prompt}
+				],
+				format=BattlePlanAssignments.model_json_schema(),
+				options={"num_thread": num_thread, "num_ctx": num_ctx}
+			)
+			
+			# Parse the structured output
+			battle_plan = BattlePlanAssignments.model_validate_json(response.message.content)
+			
+			# Convert to dictionary format
+			assignments = {}
+			for assignment in battle_plan.assignments:
+				unit_name = assignment.unit_name
+				action_name = assignment.action_name
+				
+				# Validate assignment
+				if unit_name in unit_names and action_name in action_names:
+					if unit_name not in assignments:  # Avoid duplicates
+						assignments[unit_name] = action_name
+						print(f"\n[Assignment] {unit_name} → {action_name}")
+					else:
+						print(f"\n[Duplicate ignored] {unit_name} was already assigned")
+				else:
+					if unit_name not in unit_names:
+						print(f"\n[Invalid] Unknown unit '{unit_name}' - ignoring")
+					if action_name not in action_names:
+						print(f"\n[Invalid] Unknown action '{action_name}' - ignoring")
+			
+			# Assign any remaining units to the first action
+			if len(assignments) < len(self.unit_list):
+				default_action = defined_actions[0]["name"]
+				for unit in self.unit_list:
+					if unit.name not in assignments:
+						assignments[unit.name] = default_action
+						print(f"\n[Auto-Assignment] {unit.name} → {default_action}")
+			
+			return assignments
+			
+		except Exception as e:
+			print(f"\n[Error] Structured output failed: {e}")
+			print("[Fallback] Using default assignment strategy")
+			
+			# Fallback: assign all units to first action
+			default_action = defined_actions[0]["name"]
+			assignments = {}
+			for unit in self.unit_list:
+				assignments[unit.name] = default_action
+				print(f"\n[Auto-Assignment] {unit.name} → {default_action}")
+			
+			return assignments
+
+	def _get_detailed_unit_info(self):
+		"""Get detailed information about units under command."""
+		lines = [f"Units under your command ({len(self.unit_list)} total):"]
+		for i, unit in enumerate(self.unit_list, 1):
+			lines.append(f"{i}. {unit.status_general()}")
+		return "\n".join(lines)
+
+	def _build_json_output(self, defined_actions, assignments):
+		"""Build the final JSON output with actions and assigned units."""
+		output = {"orders": []}
 		
-		return final_response["message"]["content"].strip()
+		for action in defined_actions:
+			order_entry = {
+				"name": action["name"],
+				"target": action["primary_objective"],
+				"units": []
+			}
+			
+			# Find all units assigned to this action
+			for unit_name, action_name in assignments.items():
+				if action_name == action["name"]:
+					order_entry["units"].append(unit_name)
+			
+			output["orders"].append(order_entry)
+		
+		return output
 
 	def _query_general(self, system_prompt, prompt, num_thread=4, num_ctx=4096):
 		"""

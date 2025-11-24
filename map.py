@@ -32,13 +32,102 @@ class Map:
         terrain2 = hex2.terrain
 
         offense_mod = terrain1.getOffenseModifier(terrain2.elevation)
-        defense_mod = terrain2.getDefenseModifier()
+        defense_mod = terrain1.getDefenseModifier() - terrain2.getDefenseModifier()
 
         # Simple formula: offense modifier minus defense modifier
-        advantage = offense_mod - defense_mod
+        advantage = offense_mod + defense_mod
         return advantage
 
-    def get_frontline_endpoints(self, feature_name: str, direction: str) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+    def get_weighted_front_arc_advantage(self, x: int, y: int, angle_degrees: int, arc_width_degrees: float = 180.0) -> float:
+        """Calculate weighted combat advantage for all tiles within a front arc.
+        
+        For a tile at (x, y) facing a given direction, this function calculates the combat
+        advantage for all neighboring tiles that fall within the front arc. Each neighbor's
+        contribution is weighted by its angular distance from the facing direction.
+        
+        Args:
+            x: X coordinate of the tile.
+            y: Y coordinate of the tile.
+            angle_degrees: Direction angle in degrees clockwise from north (0° = North, 90° = East).
+            arc_width_degrees: Width of the front arc in degrees (default 180°, which covers
+                             the front 180° centered on the facing direction).
+
+        Returns:
+            Weighted sum of combat advantages from all tiles in the front arc.
+        """
+        import math
+        
+        # Helper to calculate angle between two points in degrees clockwise from north
+        def angle_to_neighbor(x1: int, y1: int, x2: int, y2: int) -> float:
+            """Calculate angle in degrees clockwise from north to neighbor."""
+            # Convert to Cartesian (odd-q offset, flat-top hexagons)
+            def hex_to_cart(col: int, row: int) -> Tuple[float, float]:
+                # Standard odd-q flat-top conversion
+                # For flat-top: width spacing = 1.5, height spacing = sqrt(3)
+                # Odd columns shifted down by sqrt(3)/2
+                cx = col * 1.5
+                cy = row * (3**0.5) + (col % 2) * (3**0.5) / 2
+                return cx, cy
+            
+            x1c, y1c = hex_to_cart(x1, y1)
+            x2c, y2c = hex_to_cart(x2, y2)
+            
+            dx = x2c - x1c
+            dy = y2c - y1c
+            
+            # Calculate angle (math.atan2 returns angle from positive x-axis)
+            # Convert to degrees clockwise from north
+            angle_rad = math.atan2(dx, -dy)  # -dy because screen Y is inverted
+            angle_deg = math.degrees(angle_rad)
+            
+            # Normalize to 0-360
+            return angle_deg % 360
+        
+        # Helper to check if an angle is within the front arc
+        def is_in_arc(target_angle: float, center_angle: float, half_arc_width: float) -> tuple[bool, float]:
+            """Check if target angle is within the arc centered on center_angle.
+            Returns (is_in_arc, angular_distance_from_center)"""
+            # Normalize both angles to 0-360
+            target = target_angle % 360
+            center = center_angle % 360
+            
+            # Calculate the difference, maintaining direction
+            diff = (target - center + 180) % 360 - 180
+            
+            # Check if within arc and return absolute distance
+            return (abs(diff) <= half_arc_width, abs(diff))
+        
+        total_weighted_advantage = 0.0
+        half_arc = arc_width_degrees / 2.0
+        
+        # Get all neighbors and calculate their contribution
+        for nx, ny in self.get_neighbors(x, y):
+            if not (0 <= nx < self.width and 0 <= ny < self.height):
+                continue
+            
+            # Calculate angle to this neighbor
+            neighbor_angle = angle_to_neighbor(x, y, nx, ny)
+            
+            # Check if neighbor is within the front arc and get angular distance
+            in_arc, angle_diff = is_in_arc(neighbor_angle, angle_degrees, half_arc)
+
+            # Check if neighbor is within the front arc
+            if in_arc:
+                # Calculate combat advantage for this neighbor
+                advantage = self.get_combat_advantage(x, y, nx, ny)
+                
+                # Weight based on angle: neighbors directly in front get full weight,
+                # those at the arc edge get less weight
+                # Weight = 1.0 at center (angle_diff = 0), decreasing to 0.0 at arc edge
+                weight = 1.0 - (angle_diff / half_arc)
+                
+                # Final contribution is advantage * weight
+                contribution = advantage * weight
+                total_weighted_advantage += contribution
+        
+        return total_weighted_advantage
+
+    def get_frontline_endpoints(self, feature_name: str, angle_degrees: int) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
         """Find two endpoint coordinates for a frontline across a feature.
 
         Finds two points near the feature that maximize the perpendicular distance component 
@@ -46,15 +135,11 @@ class Map:
 
         Args:
             feature_name: A feature label present in tile.features.
-            direction: One of "N", "S", "NE", "NW", "SE", "SW" indicating enemy-facing direction.
+            angle_degrees: Angle in degrees clockwise from straight north (0° = North, 90° = East, 180° = South, 270° = West).
 
         Returns:
             A tuple of two (x, y) coordinates: (left_point, right_point), or None if not found.
         """
-
-        valid_dirs = {"N", "S", "NE", "NW", "SE", "SW"}
-        if direction not in valid_dirs:
-            return None
 
         feature_tiles = self.get_feature_coordinates(feature_name)
         if not feature_tiles:
@@ -67,19 +152,15 @@ class Map:
             y = row * (3**0.5) + (col % 2) * (3**0.5) / 2
             return x, y
 
-        # Direction unit vectors in Cartesian space
+        # Convert angle in degrees clockwise from north to direction vector in Cartesian space
+        # Note: In screen coordinates, positive Y is down, so north is negative Y
+        # Clockwise rotation from north means: 0° = (0, -1), 90° = (1, 0), 180° = (0, 1), 270° = (-1, 0)
         import math
-        direction_vectors = {
-            "N": (0, -1),                          # North
-            "S": (0, 1),                           # South
-            "NE": (math.cos(math.pi/6), -math.sin(math.pi/6)),    # 30 degrees
-            "SW": (-math.cos(math.pi/6), math.sin(math.pi/6)),    # 210 degrees
-            "NW": (-math.cos(math.pi/6), -math.sin(math.pi/6)),   # 150 degrees
-            "SE": (math.cos(math.pi/6), math.sin(math.pi/6)),     # -30 degrees
-        }
-
-        # Get the perpendicular vector (rotate 90 degrees)
-        dir_vec = direction_vectors[direction]
+        angle_radians = math.radians(angle_degrees)
+        # Direction vector for angle clockwise from north
+        dir_vec = (math.sin(angle_radians), -math.cos(angle_radians))
+        
+        # Get the perpendicular vector (rotate 90 degrees counterclockwise)
         perp_vec = (-dir_vec[1], dir_vec[0])  # Rotate 90 degrees counterclockwise
 
         # Get feature center in Cartesian coordinates
@@ -143,7 +224,7 @@ class Map:
         
         return best_pair
 
-    def get_frontline_for_feature(self, feature_name: str, direction: str) -> List[Tuple[int, int]]:
+    def get_frontline_for_feature(self, feature_name: str, angle_degrees: int) -> List[Tuple[int, int]]:
         """Compute the best frontline for a feature facing a direction.
 
         Combines get_frontline_endpoints and get_frontline to find endpoints and calculate
@@ -151,7 +232,7 @@ class Map:
 
         Args:
             feature_name: A feature label present in tile.features.
-            direction: One of "N", "S", "NE", "NW", "SE", "SW" indicating enemy-facing direction.
+            angle_degrees: Angle in degrees clockwise from straight north (0° = North, 90° = East, 180° = South, 270° = West).
 
         Returns:
             A list of (x, y) hex coordinates forming the best frontline path.
@@ -159,14 +240,14 @@ class Map:
         """
         
         # Get the endpoints
-        endpoints = self.get_frontline_endpoints(feature_name, direction)
+        endpoints = self.get_frontline_endpoints(feature_name, angle_degrees)
         if not endpoints:
             return []
         
         start, goal = endpoints
         
         # Calculate the frontline path between endpoints
-        return self.get_frontline(start, goal, direction)
+        return self.get_frontline(start, goal, angle_degrees)
 
     def distribute_units_along_frontline(self, coordinates: List[Tuple[int, int]], num_units: int) -> List[Tuple[int, int]]:
         """Take a list of coordinates and return evenly spaced points along them.
@@ -208,98 +289,46 @@ class Map:
         
         return selected
 
-    def get_frontline(self, start: Tuple[int, int], goal: Tuple[int, int], direction: str) -> List[Tuple[int, int]]:
-        """Compute the best frontline path between two endpoints using A* pathfinding.
+    def get_frontline(self, start: Tuple[int, int], goal: Tuple[int, int], angle_degrees: int) -> List[Tuple[int, int]]:
+        """Compute the best frontline path between two endpoints using pathfinding.
 
-        Uses A* to find the path between start and goal that minimizes combat disadvantage 
-        (maximizes advantage) when facing the given direction.
+        Finds the path between start and goal that maximizes combat advantage 
+        when facing the given direction. Uses Dijkstra-like pathfinding where
+        advantage is the primary factor (heavily weighted) and distance is secondary.
 
         Args:
             start: Starting (x, y) coordinate of the frontline.
             goal: Ending (x, y) coordinate of the frontline.
-            direction: One of "N", "S", "NE", "NW", "SE", "SW" indicating enemy-facing direction.
+            angle_degrees: Angle in degrees clockwise from straight north (0° = North, 90° = East, 180° = South, 270° = West).
 
         Returns:
             A list of (x, y) hex coordinates forming the best frontline path.
             Returns empty list if no path exists.
         """
 
-        valid_dirs = {"N", "S", "NE", "NW", "SE", "SW"}
-        if direction not in valid_dirs:
-            return []
+        def get_advantage(x: int, y: int) -> float:
+            """Get weighted front arc advantage for this position."""
+            return self.get_weighted_front_arc_advantage(x, y, angle_degrees, arc_width_degrees=180.0)
 
-        # Neighbor in hex direction using even-q layout
-        def hex_neighbors_dir(x: int, y: int, dir_name: str) -> Tuple[int, int]:
-            if x % 2 == 0:  # even column
-                deltas = {
-                    "N":  (0, -1), "S":  (0, +1),
-                    "NE": (+1, -1), "NW": (-1, -1),
-                    "SE": (+1, 0), "SW": (-1, 0),
-                }
-            else:  # odd column
-                deltas = {
-                    "N":  (0, -1), "S":  (0, +1),
-                    "NE": (+1, 0), "NW": (-1, 0),
-                    "SE": (+1, +1), "SW": (-1, +1),
-                }
-            dx, dy = deltas[dir_name]
-            return x + dx, y + dy
-
-        # A* pathfinding with cost = negative combat advantage (we minimize cost, maximize advantage)
-        def heuristic(p: Tuple[int, int]) -> float:
-            return float(self._hex_distance(p[0], p[1], goal[0], goal[1]))
-
-        def get_perpendicular_dirs(dir_name: str) -> Tuple[str, str]:
-            """Get the two perpendicular directions (left and right) for a given direction."""
-            # Map each direction to its perpendicular directions
-            perp_map = {
-                "N": ("NW", "NE"),
-                "S": ("SE", "SW"),
-                "NE": ("N", "SE"),
-                "NW": ("SW", "N"),
-                "SE": ("NE", "S"),
-                "SW": ("S", "NW"),
-            }
-            return perp_map[dir_name]
-
-        def get_cost(x: int, y: int) -> float:
-            """Cost to be at position (x,y). Lower is better, so negate combat advantage.
-            Includes 1/3 of the combat advantage from adjacent tiles perpendicular to the direction."""
-            # Get combat advantage in the main direction
-            nx, ny = hex_neighbors_dir(x, y, direction)
-            advantage = self.get_combat_advantage(x, y, nx, ny)
-            
-            # Get combat advantage from perpendicular tiles
-            left_dir, right_dir = get_perpendicular_dirs(direction)
-            
-            # # Left side contribution
-            # left_x, left_y = hex_neighbors_dir(x, y, left_dir)
-            # if 0 <= left_x < self.width and 0 <= left_y < self.height:
-            #     left_enemy_x, left_enemy_y = hex_neighbors_dir(left_x, left_y, direction)
-            #     left_advantage = self.get_combat_advantage(left_x, left_y, left_enemy_x, left_enemy_y)
-            #     advantage += left_advantage / 3.0
-            
-            # # Right side contribution
-            # right_x, right_y = hex_neighbors_dir(x, y, right_dir)
-            # if 0 <= right_x < self.width and 0 <= right_y < self.height:
-            #     right_enemy_x, right_enemy_y = hex_neighbors_dir(right_x, right_y, direction)
-            #     right_advantage = self.get_combat_advantage(right_x, right_y, right_enemy_x, right_enemy_y)
-            #     advantage += right_advantage / 3.0
-            
-            return -advantage  # Negate so A* minimizes cost = maximizes advantage
-
-        # A* implementation
+        # Use Dijkstra's algorithm with cost = -advantage (so we maximize advantage)
+        # Don't use heuristic - we want to explore all paths to find the truly best one
         open_set = []
-        heapq.heappush(open_set, (0.0, start))
+        # Priority = (-advantage_sum * large_weight) + (distance * small_weight)
+        heapq.heappush(open_set, (0.0, 0, start))  # (priority, distance, position)
         came_from: dict[Tuple[int, int], Optional[Tuple[int, int]]] = {}
-        g_score: dict[Tuple[int, int], float] = {start: get_cost(start[0], start[1])}
-        f_score: dict[Tuple[int, int], float] = {start: g_score[start] + heuristic(start)}
+        best_priority: dict[Tuple[int, int], float] = {start: 0.0}
+        visited = set()
 
         while open_set:
-            _, current = heapq.heappop(open_set)
+            current_priority, current_dist, current = heapq.heappop(open_set)
+            
+            # Skip if we've already processed this node
+            if current in visited:
+                continue
+            visited.add(current)
 
+            # If we reached the goal, reconstruct path
             if current == goal:
-                # Reconstruct path
                 path = []
                 while current in came_from:
                     path.append(current)
@@ -310,17 +339,26 @@ class Map:
 
             for nx, ny in self.get_neighbors(current[0], current[1]):
                 neighbor = (nx, ny)
-                # Allow all valid map positions
+                
+                # Skip invalid positions or already visited
                 if not (0 <= nx < self.width and 0 <= ny < self.height):
                     continue
+                if neighbor in visited:
+                    continue
 
-                tentative_g = g_score[current] + get_cost(nx, ny)
+                # Calculate the cost to reach this neighbor
+                neighbor_advantage = get_advantage(nx, ny)
+                new_dist = current_dist + 1
+                
+                # Priority heavily weights advantage, lightly weights distance
+                # Lower priority = better (more negative advantage = better defensive position)
+                new_priority = -neighbor_advantage * 1000.0 + new_dist
 
-                if neighbor not in g_score or tentative_g < g_score[neighbor]:
+                # If this is a better path to the neighbor, update it
+                if neighbor not in best_priority or new_priority < best_priority[neighbor]:
+                    best_priority[neighbor] = new_priority
                     came_from[neighbor] = current
-                    g_score[neighbor] = tentative_g
-                    f_score[neighbor] = tentative_g + heuristic(neighbor)
-                    heapq.heappush(open_set, (f_score[neighbor], neighbor))
+                    heapq.heappush(open_set, (new_priority, new_dist, neighbor))
 
         # No path found
         return []
