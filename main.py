@@ -4,7 +4,6 @@ from unit import Infantry
 from turnmanager import TurnManager
 from visualization import Visualization, WINDOW_W, WINDOW_H
 from general import General
-from staff_officer import StaffOfficer
 import os
 import pygame
 import json
@@ -158,21 +157,18 @@ def main():
 
 	# set up remote host
 	# use None for local ollama
-	host = "http://67.181.163.41:42069"
+	# host = "http://67.181.163.41:42069"
+	host = None
+	
 	max_retries = 9
 	num_threads = None
 	num_ctx = None
-	
-	# host = None
-	# max_retries = 9
-	# num_threads = 4
-	# num_ctx = 4096
 	
 
 	# specify model
 	# gen_model = "llama3.2:3b"
 	so_model = "llama3.2:3b"
-	gen_model = "llama3.1:8b"
+	gen_model = "llama3.2:3b"
 	# gen_model = "gpt-oss:120b-cloud"
 	# so_model = "llama3.2:3b"
 
@@ -180,12 +176,6 @@ def main():
 	generals = {
 		"French": General(unit_list=game_map.get_units_by_faction("French"), faction="French", model=gen_model, identity_prompt=blue_general_preset, ollama_host=host, game_map=game_map), 
 		"Austrian": General(unit_list=game_map.get_units_by_faction("Austrian"), faction="Austrian", model=gen_model, identity_prompt=yellow_general_preset, ollama_host=host, game_map=game_map)
-	}
-	
-	# Staff officers that translate orders into concrete moves via tools
-	staff_officers = {
-		"French": StaffOfficer(name=generals["French"].name, unit_list=game_map.get_units_by_faction("French"), game_map=game_map, model=so_model, ollama_host=host),
-		"Austrian": StaffOfficer(name=generals["Austrian"].name, unit_list=game_map.get_units_by_faction("Austrian"), game_map=game_map, model=so_model, ollama_host=host),
 	}
 
 	print("0,6 weighted combat adv:", game_map.get_weighted_front_arc_advantage(0, 6, 270))
@@ -201,7 +191,6 @@ def main():
 	turn_manager.run_game_loop(
 		vis=vis,
 		generals=generals,
-		staff_officers=staff_officers,
 		clock=clock,
 		max_retries=max_retries,
 		num_threads=num_threads,
