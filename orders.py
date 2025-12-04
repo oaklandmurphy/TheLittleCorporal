@@ -1,0 +1,203 @@
+"""Order execution system for commanding units on the battlefield."""
+
+from typing import Dict, Any, List
+
+
+def execute_orders(map_instance, orders_data: Dict[str, Any], faction: str) -> None:
+    """Execute orders from a general by routing to specific action handlers.
+    
+    Args:
+        map_instance: The Map instance to execute orders on
+        orders_data: Parsed orders dictionary with structure:
+            {
+                "orders": [
+                    {
+                        "type": str,  # Action type (Attack, Defend, Support, etc.)
+                        "name": str,  # Descriptive name for the action
+                        "target": str,  # Primary objective/terrain feature
+                        "units": List[str]  # List of unit names
+                    },
+                    ...
+                ]
+            }
+        faction: The faction executing these orders
+    """
+    print(f"\n{'='*60}")
+    print(f"[Executing Orders] Processing {len(orders_data.get('orders', []))} order(s) for {faction}")
+    print(f"{'='*60}")
+    
+    for i, order in enumerate(orders_data.get("orders", []), 1):
+        action_type = order.get("type", "Attack")
+        action_name = order.get("name", "Unknown")
+        target = order.get("target", "Unknown")
+        units = order.get("units", [])
+        
+        print(f"\n[Order {i}] {action_type}: {action_name}")
+        print(f"  → Target: {target}")
+        print(f"  → Units: {', '.join(units) if units else 'None'}")
+        
+        # Route to appropriate handler based on action type
+        _execute_attack(map_instance, target, units, faction)
+    
+    print(f"\n{'='*60}")
+    print(f"[Orders Complete] All orders processed")
+    print(f"{'='*60}\n")
+
+
+# =====================================================
+# ACTION HANDLER IMPLEMENTATIONS
+# =====================================================
+
+def _execute_attack(map_instance, target: str, units: List[str], faction: str) -> None:
+    """Execute an attack order.
+    
+    Args:
+        map_instance: The Map instance
+        target: Target feature name
+        units: List of unit names to attack with
+        faction: The faction executing the attack
+    """
+    enemy_approach_angle = map_instance.get_enemy_approach_angle(faction, target)
+    print(f"  [Info] Calculated enemy approach angle: {enemy_approach_angle}°")
+    
+    target_coords = map_instance.get_frontline_for_feature(target, enemy_approach_angle)
+    if not target_coords:
+        print(f"  [Error] Target feature '{target}' not found")
+        return
+    
+    # Get frontline positions for the target
+    destinations = map_instance.distribute_units_along_frontline(target_coords, len(units))
+    
+    if not destinations:
+        print(f"  [Error] Could not determine attack positions for '{target}'")
+        return
+    print(f"  [Info] Assigned attack positions: {destinations}")
+    for unit_name, dest in zip(units, destinations):
+        print(f"  [Attack] Unit '{unit_name}' assigned to attack at {dest}")
+        map_instance.march(unit_name, dest)
+
+
+def _execute_defend(map_instance, target: str, units: List[str], faction: str) -> None:
+    """Execute a defend order.
+    
+    Args:
+        map_instance: The Map instance
+        target: Target feature name to defend
+        units: List of unit names to defend with
+        faction: The faction executing the defense
+    """
+    print(f"  [TODO] Implement defend logic for {target}")
+    # TODO: Implement defend logic
+    pass
+
+
+def _execute_support(map_instance, target: str, units: List[str], faction: str) -> None:
+    """Execute a support order.
+    
+    Args:
+        map_instance: The Map instance
+        target: Target feature or unit to support
+        units: List of unit names to provide support
+        faction: The faction executing support
+    """
+    print(f"  [TODO] Implement support logic for {target}")
+    # TODO: Implement support logic
+    pass
+
+
+def _execute_advance(map_instance, target: str, units: List[str], faction: str) -> None:
+    """Execute an advance order.
+    
+    Args:
+        map_instance: The Map instance
+        target: Target feature to advance toward
+        units: List of unit names to advance
+        faction: The faction advancing
+    """
+    print(f"  [TODO] Implement advance logic for {target}")
+    # TODO: Implement advance logic
+    pass
+
+
+def _execute_withdraw(map_instance, target: str, units: List[str], faction: str) -> None:
+    """Execute a withdraw order.
+    
+    Args:
+        map_instance: The Map instance
+        target: Fallback position or rally point
+        units: List of unit names to withdraw
+        faction: The faction withdrawing
+    """
+    print(f"  [TODO] Implement withdraw logic for {target}")
+    # TODO: Implement withdraw logic
+    pass
+
+
+def _execute_hold(map_instance, target: str, units: List[str], faction: str) -> None:
+    """Execute a hold order.
+    
+    Args:
+        map_instance: The Map instance
+        target: Position to hold
+        units: List of unit names to hold position
+        faction: The faction holding
+    """
+    print(f"  [TODO] Implement hold logic for {target}")
+    # TODO: Implement hold logic
+    pass
+
+
+def _execute_flank(map_instance, target: str, units: List[str], faction: str) -> None:
+    """Execute a flank order.
+    
+    Args:
+        map_instance: The Map instance
+        target: Target position or enemy to flank
+        units: List of unit names to execute flanking maneuver
+        faction: The faction flanking
+    """
+    print(f"  [TODO] Implement flank logic for {target}")
+    # TODO: Implement flank logic
+    pass
+
+
+def _execute_pursue(map_instance, target: str, units: List[str], faction: str) -> None:
+    """Execute a pursue order.
+    
+    Args:
+        map_instance: The Map instance
+        target: Enemy unit or direction to pursue
+        units: List of unit names to pursue
+        faction: The faction pursuing
+    """
+    print(f"  [TODO] Implement pursue logic for {target}")
+    # TODO: Implement pursue logic
+    pass
+
+
+def _execute_screen(map_instance, target: str, units: List[str], faction: str) -> None:
+    """Execute a screen order.
+    
+    Args:
+        map_instance: The Map instance
+        target: Area or position to screen
+        units: List of unit names to form screen
+        faction: The faction screening
+    """
+    print(f"  [TODO] Implement screen logic for {target}")
+    # TODO: Implement screen logic
+    pass
+
+
+def _execute_reconnoiter(map_instance, target: str, units: List[str], faction: str) -> None:
+    """Execute a reconnoiter order.
+    
+    Args:
+        map_instance: The Map instance
+        target: Area to reconnoiter
+        units: List of unit names to scout
+        faction: The faction reconnoitering
+    """
+    print(f"  [TODO] Implement reconnoiter logic for {target}")
+    # TODO: Implement reconnoiter logic
+    pass
