@@ -221,7 +221,8 @@ class General:
 							"size": unit.size,
 							"quality": unit.quality,
 							"morale": unit.morale,
-							"distance": min_dist
+							"distance": min_dist,
+							"unit": unit
 						})
 		return enemy_units
 	
@@ -591,10 +592,10 @@ class General:
 		if enemy_units:
 			assessment += f"Detected {len(enemy_units)} enemy unit(s):\n"
 			for eu in enemy_units:
+				unit_desc = eu['unit'].status_general().replace(f"{eu['unit'].name}. ({eu['unit'].__class__.__name__}) ", "")
 				assessment += (
 					f"  - {eu['name']} at ({eu['position'][0]},{eu['position'][1]}): "
-					f"Size {eu['size']}, Quality {eu['quality']}, Morale {eu['morale']}, "
-					f"{eu['distance']} hexes away\n"
+					f"{unit_desc} {eu['distance']} hexes away\n"
 				)
 		else:
 			assessment += f"No enemy units detected within {self.ENEMY_DETECTION_RANGE} hexes.\n"
@@ -777,12 +778,37 @@ class General:
 			Formatted string describing enemy units
 		"""
 		if enemy_units:
-			summary = f"Detected {len(enemy_units)} enemy unit(s):\n"
-			for eu in sorted(enemy_units, key=lambda e: e["distance"]):
-				summary += (
-					f"      * {eu['name']} at ({eu['position'][0]},{eu['position'][1]}) - "
-					f"Size {eu['size']}, Qlty {eu['quality']}, Mor {eu['morale']}, {eu['distance']} hexes away\n"
-				)
+			# Summarize by quality and size rather than listing individual units
+			total_units = len(enemy_units)
+			closest_distance = min(eu.get('distance', 999) for eu in enemy_units)
+			
+			# Use descriptive labels from Unit class
+			size_labels = {range(1, 4): "small", range(4, 7): "average-sized", range(7, 10): "large", range(10, 13): "very large"}
+			quality_labels = {1: "green", 2: "regular", 3: "seasoned", 4: "veteran", 5: "elite"}
+			morale_labels = {range(0, 2): "broken", range(2, 4): "shaken", range(4, 7): "steady", range(7, 9): "eager", range(9, 11): "fresh"}
+			
+			def label_for(value, table):
+				for key, label in table.items():
+					if isinstance(key, range) and value in key:
+						return label
+					elif value == key:
+						return label
+				return "unknown"
+			
+			# Calculate aggregate descriptions
+			avg_quality = sum(eu.get('quality', 0) for eu in enemy_units) / total_units if total_units > 0 else 0
+			avg_morale = sum(eu.get('morale', 0) for eu in enemy_units) / total_units if total_units > 0 else 0
+			total_size = sum(eu.get('size', 0) for eu in enemy_units)
+			
+			size_desc = label_for(total_size // total_units if total_units > 0 else 0, size_labels)
+			quality_desc = label_for(round(avg_quality), quality_labels)
+			morale_desc = label_for(round(avg_morale), morale_labels)
+			
+			summary = (
+				f"Detected {total_units} enemy unit{'s' if total_units != 1 else ''}: "
+				f"Average {size_desc}, {quality_desc} formations that are {morale_desc}, "
+				f"closest at {closest_distance} hexes\n"
+			)
 		else:
 			summary = "No enemy units detected within 3 hexes.\n"
 		return summary
@@ -820,10 +846,10 @@ class General:
 		recon_system_1 = (
 			f"You are {self.name}, do not break character under any circumstances.\n"
 			f"{self.description}\n\n"
-			f"Battlefield Summary:\n{map_summary}\n\n"
-			f"Your orders: {player_instructions}\n\n"
+			f"=== BATTLEFIELD INTELLIGENCE ===\n{map_summary}\n\n"
+			f"Your orders from high command: {player_instructions}\n\n"
 			"TASK: Gather intelligence about the battlefield.\n"
-			"Call 2-4 reconnaissance tools to investigate key terrain features or enemy positions.\n"
+			"Review the battlefield intelligence above, then call 2-4 reconnaissance tools to investigate key terrain features or enemy positions in more detail.\n"
 			"Available tools:\n"
 			"- reconnaissance_feature: Get detailed info about a terrain feature\n"
 			"- assess_enemy_strength: Analyze enemy forces near a location\n"

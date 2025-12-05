@@ -46,6 +46,32 @@ def generate_tactical_report(map, faction: str, unit_list: List = None) -> str:
         faction: The faction name (for identifying enemies)
         unit_list: List of units under this general's command. If None, includes all faction units.
     """
+    # Use the new enhanced battlefield summary method
+    # This provides better information than the old reporting system
+    enhanced_summary = map.get_battlefield_summary(faction)
+    
+    # Also get decision options to guide the general
+    decision_options = map.get_decision_options(faction)
+    
+    # Combine enhanced summary with strategic options
+    report_lines = [enhanced_summary]
+    report_lines.append("\n=== STRATEGIC OPTIONS ===\n")
+    
+    for strategy, details in decision_options["strategic_options"].items():
+        report_lines.append(f"{strategy.upper()}: {details['description']}")
+        report_lines.append(f"  Suggested actions: {', '.join(details['suggested_actions'])}\n")
+    
+    return "\n".join(report_lines)
+
+
+def generate_tactical_report_legacy(map, faction: str, unit_list: List = None) -> str:
+    """Legacy tactical report generator (kept for backward compatibility).
+    
+    Args:
+        map: The game map
+        faction: The faction name (for identifying enemies)
+        unit_list: List of units under this general's command. If None, includes all faction units.
+    """
     # Analyze battlefield
     features = _find_terrain_features(map)
     major_features = _select_notable_features(map, features)

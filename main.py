@@ -166,11 +166,10 @@ def main():
 	
 
 	# specify model
-	# gen_model = "llama3.2:3b"
-	so_model = "llama3.2:3b"
+	gen_model = "llama2:7b"
 	gen_model = "llama3.2:3b"
 	# gen_model = "gpt-oss:120b-cloud"
-	# so_model = "llama3.2:3b"
+	# gen_model = "mistral:7b"
 
 	# Setup generals
 	generals = {

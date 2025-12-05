@@ -47,7 +47,33 @@ class Map:
         terrain_type = max(terrain_count, key=terrain_count.get)
 
         # Units present on the feature
+        units_on = []
+        for x, y in coords:
+            unit = self.grid[y][x].unit
+            if unit:
+                units_on.append(f"{unit.name} ({unit.faction}) at ({x},{y})")
 
+        # Units near the feature (adjacent to any feature hex, but not on it)
+        units_near = set()
+        for x, y in coords:
+            for nx, ny in self.get_neighbors(x, y):
+                if (nx, ny) not in coords and 0 <= nx < self.width and 0 <= ny < self.height:
+                    nunit = self.grid[ny][nx].unit
+                    if nunit:
+                        units_near.add(f"{nunit.name} ({nunit.faction}) at ({nx},{ny})")
+
+        desc = f"Feature '{feature_name}':\n"
+        desc += f"  Terrain type: {terrain_type}\n"
+        desc += f"  Hexes: {coords}\n"
+        if units_on:
+            desc += f"  Units present: {', '.join(units_on)}\n"
+        else:
+            desc += "  Units present: None\n"
+        if units_near:
+            desc += f"  Units nearby: {', '.join(units_near)}\n"
+        else:
+            desc += "  Units nearby: None\n"
+        return desc
 
     """Hexagonal grid storing terrain and units, with pathfinding and combat logic."""
     def __init__(self, width: int, height: int):
@@ -539,6 +565,294 @@ class Map:
     def get_frontline(self, start: Tuple[int, int], goal: Tuple[int, int], angle_degrees: int) -> List[Tuple[int, int]]:
         """Compute the best frontline path between two endpoints using pathfinding."""
         return frontline.get_frontline(self.grid, self.width, self.height, start, goal, angle_degrees)
+
+    def get_tactical_situation(self, faction: str) -> dict:
+        """Get comprehensive tactical information for a faction.
+        
+        Args:
+            faction: The faction to analyze
+            
+        Returns:
+            Dictionary containing friendly units, enemy units, and terrain features
+        """
+        friendly_units = self.get_units_by_faction(faction)
+        enemy_units = []
+        for row in self.grid:
+            for hex in row:
+                if hex.unit and hex.unit.faction != faction:
+                    enemy_units.append(hex.unit)
+        
+        # Calculate frontline positions
+        frontline_units = []
+        for unit in friendly_units:
+            for nx, ny in self.get_neighbors(unit.x, unit.y):
+                if 0 <= nx < self.width and 0 <= ny < self.height:
+                    neighbor_unit = self.grid[ny][nx].unit
+                    if neighbor_unit and neighbor_unit.faction != faction:
+                        frontline_units.append(unit)
+                        break
+        
+        return {
+            "friendly_units": [
+                {
+                    "name": u.name,
+                    "position": [u.x, u.y],
+                    "size": u.size,
+                    "mobility": u.mobility,
+                    "engaged": u.engaged,
+                    "on_frontline": u in frontline_units
+                }
+                for u in friendly_units
+            ],
+            "enemy_units": [
+                {
+                    "name": u.name,
+                    "position": [u.x, u.y],
+                    "size": u.size,
+                    "distance_to_nearest_friendly": min(
+                        pathfinding.hex_distance(u.x, u.y, f.x, f.y) 
+                        for f in friendly_units
+                    ) if friendly_units else None
+                }
+                for u in enemy_units
+            ],
+            "terrain_features": self.list_feature_names()
+        }
+
+    def get_decision_options(self, faction: str) -> dict:
+        """Provide structured decision options rather than free-form orders.
+        
+        Args:
+            faction: The faction making decisions
+            
+        Returns:
+            Dictionary with situation assessment and strategic options
+        """
+        tactical_sit = self.get_tactical_situation(faction)
+        
+        options = {
+            "defensive": {
+                "description": "Hold key terrain and repel enemy advances",
+                "suggested_actions": ["hold", "defend", "support"]
+            },
+            "offensive": {
+                "description": "Push forward and seize objectives",
+                "suggested_actions": ["advance", "attack", "flank_left", "flank_right"]
+            },
+            "delaying": {
+                "description": "Slow enemy advance while preserving forces",
+                "suggested_actions": ["screen", "withdraw", "retreat"]
+            },
+            "maneuver": {
+                "description": "Reposition forces for advantage",
+                "suggested_actions": ["march", "concentrate", "redeploy"]
+            }
+        }
+        
+        return {
+            "situation": tactical_sit,
+            "strategic_options": options
+        }
+
+    def get_battlefield_summary(self, faction: str) -> str:
+        """Get a natural language summary of the battlefield for LLM consumption.
+        
+        Args:
+            faction: The faction to generate summary for
+            
+        Returns:
+            Formatted string describing the tactical situation
+        """
+        tactical_sit = self.get_tactical_situation(faction)
+        
+        summary = f"=== BATTLEFIELD SITUATION FOR {faction.upper()} ===\n\n"
+        
+        # Calculate average friendly unit position for reference
+        friendly_units = tactical_sit['friendly_units']
+        if friendly_units:
+            avg_friendly_x = sum(u['position'][0] for u in friendly_units) / len(friendly_units)
+            avg_friendly_y = sum(u['position'][1] for u in friendly_units) / len(friendly_units)
+        else:
+            avg_friendly_x, avg_friendly_y = 0, 0
+        
+        # Friendly forces summary
+        summary += f"YOUR FORCES ({len(friendly_units)} units):\n"
+        for unit in friendly_units:
+            status = "ENGAGED" if unit['engaged'] else "READY"
+            frontline = " [FRONTLINE]" if unit['on_frontline'] else ""
+            summary += f"  - {unit['name']}: Size {unit['size']}, "
+            summary += f"Position ({unit['position'][0]}, {unit['position'][1]}), "
+            summary += f"Status: {status}{frontline}\n"
+        
+        # Enemy forces summary
+        summary += f"\nENEMY FORCES ({len(tactical_sit['enemy_units'])} units):\n"
+        for unit in tactical_sit['enemy_units']:
+            dist = unit['distance_to_nearest_friendly']
+            dist_str = f"{dist} hexes away" if dist is not None else "unknown distance"
+            summary += f"  - {unit['name']}: Size {unit['size']}, "
+            summary += f"Position ({unit['position'][0]}, {unit['position'][1]}), {dist_str}\n"
+        
+        # Detailed terrain features
+        summary += f"\nKEY TERRAIN FEATURES:\n"
+        
+        # Build a map of which features overlap with which hexes
+        feature_hex_map = {}  # feature_name -> set of (x, y)
+        hex_features_map = {}  # (x, y) -> list of feature names
+        
+        for feature_name in tactical_sit['terrain_features']:
+            coords = self.get_feature_coordinates(feature_name)
+            feature_hex_map[feature_name] = set(coords)
+            for coord in coords:
+                if coord not in hex_features_map:
+                    hex_features_map[coord] = []
+                hex_features_map[coord].append(feature_name)
+        
+        # Sort features by size (largest first)
+        features_by_size = sorted(
+            tactical_sit['terrain_features'],
+            key=lambda f: len(feature_hex_map.get(f, [])),
+            reverse=True
+        )
+        
+        # Track which features have been mentioned as minor features
+        mentioned_as_minor = set()
+        
+        for feature_name in features_by_size[:10]:  # Limit to first 10
+            # Skip if this was already mentioned as a minor feature
+            if feature_name in mentioned_as_minor:
+                continue
+                
+            coords = self.get_feature_coordinates(feature_name)
+            if not coords:
+                continue
+            
+            # Determine terrain type (majority terrain)
+            terrain_count = {}
+            for x, y in coords:
+                tname = self.grid[y][x].terrain.name
+                terrain_count[tname] = terrain_count.get(tname, 0) + 1
+            terrain_type = max(terrain_count, key=terrain_count.get)
+            
+            # Calculate feature center and size
+            feature_x = sum(x for x, y in coords) / len(coords)
+            feature_y = sum(y for x, y in coords) / len(coords)
+            feature_size = len(coords)
+            
+            # Find overlapping features (minor features that share hexes with this one)
+            overlapping_features = set()
+            for coord in coords:
+                for other_feature in hex_features_map.get(coord, []):
+                    if other_feature != feature_name:
+                        # Only include as minor if it's smaller
+                        if len(feature_hex_map[other_feature]) < feature_size:
+                            overlapping_features.add(other_feature)
+                            mentioned_as_minor.add(other_feature)
+            
+            # Calculate distance and direction from friendly units
+            if friendly_units:
+                dist_from_friendly = pathfinding.hex_distance(
+                    int(avg_friendly_x), int(avg_friendly_y),
+                    int(feature_x), int(feature_y)
+                )
+                
+                # Calculate direction using simple compass logic
+                dx = feature_x - avg_friendly_x
+                dy = feature_y - avg_friendly_y
+                
+                # Determine cardinal/intercardinal direction
+                if abs(dx) < 0.5 and abs(dy) < 0.5:
+                    direction = "at your position"
+                else:
+                    angle = math.atan2(dx, -dy)  # -dy because screen Y is inverted
+                    angle_deg = (math.degrees(angle) + 360) % 360
+                    
+                    if angle_deg < 22.5 or angle_deg >= 337.5:
+                        direction = "to the north"
+                    elif angle_deg < 67.5:
+                        direction = "to the northeast"
+                    elif angle_deg < 112.5:
+                        direction = "to the east"
+                    elif angle_deg < 157.5:
+                        direction = "to the southeast"
+                    elif angle_deg < 202.5:
+                        direction = "to the south"
+                    elif angle_deg < 247.5:
+                        direction = "to the southwest"
+                    elif angle_deg < 292.5:
+                        direction = "to the west"
+                    else:
+                        direction = "to the northwest"
+            else:
+                dist_from_friendly = None
+                direction = "unknown direction"
+            
+            # Check for units on or near the feature
+            friendly_on_feature = []
+            enemy_on_feature = 0
+            friendly_near_feature = []
+            enemy_near_feature = 0
+            
+            for x, y in coords:
+                unit = self.grid[y][x].unit
+                if unit:
+                    if unit.faction == faction:
+                        friendly_on_feature.append(unit.name)
+                    else:
+                        enemy_on_feature += 1
+            
+            # Check adjacent hexes for nearby units
+            adjacent_checked = set()
+            for x, y in coords:
+                for nx, ny in self.get_neighbors(x, y):
+                    if (nx, ny) not in coords and (nx, ny) not in adjacent_checked:
+                        if 0 <= nx < self.width and 0 <= ny < self.height:
+                            nunit = self.grid[ny][nx].unit
+                            if nunit:
+                                if nunit.faction == faction:
+                                    friendly_near_feature.append(nunit.name)
+                                else:
+                                    enemy_near_feature += 1
+                            adjacent_checked.add((nx, ny))
+            
+            # Build feature description
+            summary += f"\n  {feature_name}:\n"
+            summary += f"    Type: {terrain_type}\n"
+            summary += f"    Size: {feature_size} hexes\n"
+            if dist_from_friendly is not None:
+                summary += f"    Location: {dist_from_friendly} hexes {direction} from your forces\n"
+            else:
+                summary += f"    Location: {direction}\n"
+            summary += f"    Center position: ({int(feature_x)}, {int(feature_y)})\n"
+            
+            # Report units present
+            units_present_parts = []
+            if friendly_on_feature:
+                units_present_parts.append(f"Your units: {', '.join(friendly_on_feature)}")
+            if enemy_on_feature > 0:
+                units_present_parts.append(f"{enemy_on_feature} enemy unit{'s' if enemy_on_feature != 1 else ''}")
+            
+            if units_present_parts:
+                summary += f"    Units present: {'; '.join(units_present_parts)}\n"
+            
+            # Report nearby units
+            units_nearby_parts = []
+            if friendly_near_feature:
+                units_nearby_parts.append(f"Your units: {', '.join(friendly_near_feature)}")
+            if enemy_near_feature > 0:
+                units_nearby_parts.append(f"{enemy_near_feature} enemy unit{'s' if enemy_near_feature != 1 else ''}")
+            
+            if units_nearby_parts:
+                summary += f"    Units nearby: {'; '.join(units_nearby_parts)}\n"
+            
+            if not units_present_parts and not units_nearby_parts:
+                summary += f"    Status: Unoccupied\n"
+            
+            # Add minor features if any
+            if overlapping_features:
+                minor_list = ', '.join(sorted(overlapping_features))
+                summary += f"    Minor features: {minor_list}\n"
+        
+        return summary
 
     def execute_orders(self, orders_data: Dict[str, Any], faction: str) -> None:
         """Execute orders from a general by routing to specific action handlers."""
