@@ -316,3 +316,171 @@ def distribute_units_along_frontline(coordinates: List[Tuple[int, int]], num_uni
         selected.append(coordinates[index])
     
     return selected
+
+
+def get_frontline_total_advantage(grid, width: int, height: int, frontline_coords: List[Tuple[int, int]], 
+                                   angle_degrees: int, arc_width_degrees: float = 180.0) -> float:
+    """Calculate the total combat advantage for a frontline facing a given direction.
+    
+    For each coordinate in the frontline, calculates the weighted front arc advantage
+    and sums them up to get a total advantage score for the entire frontline.
+    
+    Args:
+        grid: The 2D grid of Hex objects
+        width: Width of the map
+        height: Height of the map
+        frontline_coords: List of (x, y) coordinates that make up the frontline
+        angle_degrees: Direction the frontline is facing (0° = North, 90° = East, 180° = South, 270° = West)
+        arc_width_degrees: Width of the front arc in degrees (default 180°)
+    
+    Returns:
+        Total combat advantage score for the entire frontline
+    """
+    if not frontline_coords:
+        return 0.0
+    
+    total_advantage = 0.0
+    
+    for x, y in frontline_coords:
+        if 0 <= x < width and 0 <= y < height:
+            advantage = get_weighted_front_arc_advantage(
+                grid, width, height, x, y, angle_degrees, arc_width_degrees
+            )
+            total_advantage += advantage
+    
+    return total_advantage
+
+
+def get_best_frontline_with_advantage(grid, width: int, height: int, start: Tuple[int, int], 
+                                       goal: Tuple[int, int], angle_degrees: int,
+                                       arc_width_degrees: float = 180.0) -> Dict[str, Any]:
+    """Calculate the best frontline from point A to point B and return it with its total advantage.
+    
+    Combines frontline pathfinding with advantage calculation to provide both the optimal
+    frontline path and its combat effectiveness score.
+    
+    Args:
+        grid: The 2D grid of Hex objects
+        width: Width of the map
+        height: Height of the map
+        start: Starting (x, y) coordinate of the frontline
+        goal: Ending (x, y) coordinate of the frontline
+        angle_degrees: Direction the frontline is facing (0° = North, 90° = East, 180° = South, 270° = West)
+        arc_width_degrees: Width of the front arc in degrees (default 180°)
+    
+    Returns:
+        Dictionary containing:
+            - 'frontline': List of (x, y) coordinates forming the best frontline path
+            - 'total_advantage': Total combat advantage score for this frontline
+            - 'length': Number of hexes in the frontline
+            - 'average_advantage': Average advantage per hex position
+    """
+    # Generate the best frontline path
+    frontline_path = get_frontline(grid, width, height, start, goal, angle_degrees)
+    
+    if not frontline_path:
+        return {
+            'frontline': [],
+            'total_advantage': 0.0,
+            'length': 0,
+            'average_advantage': 0.0
+        }
+    
+    # Calculate total advantage for this frontline
+    total_advantage = get_frontline_total_advantage(
+        grid, width, height, frontline_path, angle_degrees, arc_width_degrees
+    )
+    
+    # Calculate average advantage per position
+    length = len(frontline_path)
+    average_advantage = total_advantage / length if length > 0 else 0.0
+    
+    return {
+        'frontline': frontline_path,
+        'total_advantage': total_advantage,
+        'length': length,
+        'average_advantage': average_advantage
+    }
+
+
+def identify_defensive_features(map_obj, faction: str,
+                                arc_width_degrees: float = 180.0) -> List[Dict[str, Any]]:
+    """Identify terrain features with high combat advantage facing enemy forces.
+    
+    For each terrain feature on the map, calculates the direction toward enemy units
+    and evaluates the combat advantage of defending that feature from that direction.
+    Returns features sorted by their defensive value.
+    
+    Args:
+        map_obj: The Map object containing the grid and helper methods
+        faction: The faction to analyze defensive positions for
+        arc_width_degrees: Width of the front arc in degrees (default 180°)
+    
+    Returns:
+        List of dictionaries, each containing:
+            - 'feature_name': Name of the terrain feature
+            - 'feature_coords': List of (x, y) coordinates in the feature
+            - 'feature_center': (x, y) center position of the feature
+            - 'enemy_direction': Angle in degrees toward enemy forces
+            - 'total_advantage': Total combat advantage score for this feature
+            - 'average_advantage': Average advantage per hex in feature
+            - 'size': Number of hexes in the feature
+        Sorted by total_advantage (highest first)
+    """
+    grid = map_obj.grid
+    width = map_obj.width
+    height = map_obj.height
+    
+    # Get all terrain feature names
+    feature_names = map_obj.list_feature_names()
+    
+    if not feature_names:
+        return []
+    
+    # Analyze each feature
+    defensive_features = []
+    
+    for feature_name in feature_names:
+        # Use existing method to get enemy approach angle for this feature
+        enemy_direction = map_obj.get_enemy_approach_angle(faction, feature_name)
+        
+        if enemy_direction is None:
+            # No enemies found, skip this feature
+            continue
+        
+        # Get feature coordinates
+        coords = map_obj.get_feature_coordinates(feature_name)
+        if not coords:
+            continue
+        
+        # Calculate feature center
+        feature_x = sum(x for x, y in coords) / len(coords)
+        feature_y = sum(y for x, y in coords) / len(coords)
+        feature_center = (int(feature_x), int(feature_y))
+        
+        # Calculate total advantage for all hexes in this feature facing enemies
+        total_advantage = 0.0
+        for x, y in coords:
+            advantage = get_weighted_front_arc_advantage(
+                grid, width, height, x, y, enemy_direction, arc_width_degrees
+            )
+            total_advantage += advantage
+        
+        # Calculate average advantage per hex
+        size = len(coords)
+        average_advantage = total_advantage / size if size > 0 else 0.0
+        
+        defensive_features.append({
+            'feature_name': feature_name,
+            'feature_coords': coords,
+            'feature_center': feature_center,
+            'enemy_direction': enemy_direction,
+            'total_advantage': total_advantage,
+            'average_advantage': average_advantage,
+            'size': size
+        })
+    
+    # Sort by total advantage (best defensive features first)
+    defensive_features.sort(key=lambda f: f['total_advantage'], reverse=True)
+    
+    return defensive_features
