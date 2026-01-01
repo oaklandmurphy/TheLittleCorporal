@@ -1,16 +1,13 @@
-from terrain import Terrain
-from terrain import FIELDS
+from .terrain import Terrain, FIELDS
 from unit import Unit
-from hex import Hex
+from .hex import Hex
 
 import math
 from typing import Optional, List, Tuple, Dict, Any
 
 # Import the refactored modules
-import pathfinding
+from . import pathfinding, terrain_features, frontline
 import combat
-import terrain_features
-import frontline
 import orders 
 
 
@@ -112,8 +109,23 @@ class Map:
         unit.x, unit.y = x, y
         return True
 
-    def move_unit(self, unit: Unit, target_x: int, target_y: int) -> bool:
-        """Move a unit if reachable within its mobility using Dijkstra's algorithm."""
+    def move_unit(self, unit: Unit, target_x: int, target_y: int, allow_engaged: bool = False) -> bool:
+        """Move a unit if reachable within its mobility using Dijkstra's algorithm.
+        
+        Args:
+            unit: The unit to move
+            target_x: Target x coordinate
+            target_y: Target y coordinate
+            allow_engaged: If True, allow engaged units to move (for retreat orders)
+            
+        Returns:
+            True if the unit was successfully moved, False otherwise
+        """
+        # Engaged units cannot move unless explicitly allowed (e.g., for retreat)
+        if unit.engaged and not allow_engaged:
+            print(f"{unit.name} is engaged in combat and cannot move!")
+            return False
+            
         reachable = self.find_reachable_hexes(unit)
         if (target_x, target_y) not in reachable:
             return False  # too far or occupied
@@ -398,11 +410,75 @@ class Map:
     #         return {"ok": False, "error": "Unit not found"}
     #     return {"ok": True, "unit": unit.name, "position": [unit.x, unit.y]}
 
+    def retreat(self, unit_name: str, destination: Tuple[int, int]) -> dict:
+        """Order the unit to retreat toward a destination, moving away from enemies.
+        
+        Retreat is the only order that engaged units can execute, allowing them to 
+        disengage from combat.
+        
+        Args:
+            unit_name: Name of the unit to retreat
+            destination: Target (x, y) coordinates to retreat toward
+            
+        Returns:
+            Dictionary with 'ok' status, unit name, and position
+        """
+        unit = self._find_unit_by_name(unit_name)
+        if not unit:
+            return {"ok": False, "error": "Unit not found"}
+        
+        dx, dy = int(destination[0]), int(destination[1])
+        
+        # Find nearest enemy position to prioritize moving away from them
+        enemy_pos = self._nearest_enemy_pos(unit)
+        reachable = self.find_reachable_hexes(unit)
+        
+        if not reachable:
+            return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], 
+                    "reason": "No reachable hexes"}
+        
+        # Score reachable hexes: prioritize distance from enemy, then closeness to destination
+        best_hex = None
+        best_score = None
+        
+        for (rx, ry) in reachable.keys():
+            if (rx, ry) == (unit.x, unit.y):
+                continue
+            
+            # Calculate distance from enemy (maximize) and distance to destination (minimize)
+            dist_enemy = pathfinding.hex_distance(rx, ry, enemy_pos[0], enemy_pos[1]) if enemy_pos else 0
+            dist_dest = pathfinding.hex_distance(rx, ry, dx, dy)
+            
+            # Score heavily favors moving away from enemy
+            score = (dist_enemy * 10, -dist_dest)
+            
+            if best_score is None or score > best_score:
+                best_score = score
+                best_hex = (rx, ry)
+        
+        if not best_hex:
+            return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], 
+                    "reason": "No better hex to retreat to"}
+        
+        # Use allow_engaged=True to permit engaged units to move during retreat
+        moved = self.move_unit(unit, best_hex[0], best_hex[1], allow_engaged=True)
+        
+        if moved and unit.engaged:
+            print(f"{unit.name} retreats from combat!")
+        
+        return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
+
     def march(self, unit_name: str, destination: Tuple[int, int]) -> dict:
         """Order the unit to march toward a destination (x, y)."""
         unit = self._find_unit_by_name(unit_name)
         if not unit:
             return {"ok": False, "error": "Unit not found"}
+        
+        # Check if unit is engaged - engaged units cannot execute march orders
+        if unit.engaged:
+            return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], 
+                    "reason": "Unit is engaged in combat and cannot march"}
+        
         dx, dy = int(destination[0]), int(destination[1])
         reachable = self.find_reachable_hexes(unit)
         if (dx, dy) in reachable:

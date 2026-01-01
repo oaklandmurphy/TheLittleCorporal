@@ -13,7 +13,7 @@ from collections import deque, defaultdict
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional
 import math
-import frontline
+import map.frontline as frontline
 
 
 @dataclass
@@ -87,7 +87,7 @@ def generate_strategic_overview(map, faction: str, unit_list: List = None) -> st
         
         # Add engagement status
         if unit.engaged:
-            engagement_status = " Currently engaged in combat."
+            engagement_status = " Currently engaged in combat. This unit will not respond to any order type except Retreat"
         else:
             engagement_status = " Not engaged."
         
@@ -139,10 +139,32 @@ def generate_strategic_overview(map, faction: str, unit_list: List = None) -> st
     friendly_defensive_features = frontline.identify_defensive_features(map, faction)
     
     if friendly_defensive_features:
-        # Show top 3-5 most advantageous features
-        for feature_data in friendly_defensive_features[:5]:
+        # Sort by size, descending, to handle parent features first
+        friendly_defensive_features.sort(key=lambda f: f['size'], reverse=True)
+        
+        # Keep track of features that have been mentioned as sub-features
+        mentioned_features = set()
+        
+        # Calculate friendly center of mass for approach analysis
+        friendly_center_x = sum(u.x for u in friendly_units) / len(friendly_units)
+        friendly_center_y = sum(u.y for u in friendly_units) / len(friendly_units)
+        
+        # Limit the number of top-level features displayed
+        features_displayed = 0
+        for feature_data in friendly_defensive_features:
+            if features_displayed >= 5:
+                break
+
             feature_name = feature_data['feature_name']
+            if feature_name in mentioned_features:
+                continue
+            
+            # This is a top-level feature to display
+            features_displayed += 1
+            mentioned_features.add(feature_name)
+
             coords = feature_data['feature_coords']
+            feature_center = feature_data['feature_center']
             
             # Get terrain type
             sample_coord = coords[0]
@@ -176,7 +198,30 @@ def generate_strategic_overview(map, faction: str, unit_list: List = None) -> st
                 unit_names = ', '.join(u.name for u in units_present)
                 lines.append(f"    Currently held by: {unit_names}")
             else:
-                lines.append(f"    Status: Unoccupied - consider positioning units here")
+                lines.append(f"    Status: Unoccupied")
+                
+                # Analyze approach to this feature
+                approach_analysis = _analyze_approach(map, faction, friendly_center_x, friendly_center_y, 
+                                                     feature_center, coords, enemy_units)
+                if approach_analysis:
+                    lines.append(f"    Approach: {approach_analysis}")
+
+            # Find and list sub-features
+            sub_features = []
+            feature_coord_set = set(coords)
+            for other_feature in friendly_defensive_features:
+                other_name = other_feature['feature_name']
+                if other_name == feature_name or other_name in mentioned_features:
+                    continue
+                
+                other_coords_set = set(other_feature['feature_coords'])
+                if other_coords_set.issubset(feature_coord_set):
+                    sub_features.append(other_name)
+                    mentioned_features.add(other_name)
+            
+            if sub_features:
+                lines.append(f"    Sub-features: {', '.join(sub_features)}")
+
             lines.append("")
     else:
         lines.append("  No particularly defensible terrain identified.\n")
@@ -264,6 +309,72 @@ def _degrees_to_compass(degrees: float) -> str:
         return "west"
     else:
         return "northwest"
+
+
+def _analyze_approach(map, faction: str, friendly_x: float, friendly_y: float,
+                     feature_center: Tuple[int, int], feature_coords: List[Tuple[int, int]],
+                     enemy_units: List) -> Optional[str]:
+    """Analyze the approach path to a terrain feature and note obstacles.
+    
+    Args:
+        map: The game map
+        faction: Friendly faction
+        friendly_x, friendly_y: Center of mass of friendly forces
+        feature_center: Center coordinates of the target feature
+        feature_coords: All coordinates of the target feature
+        enemy_units: List of all enemy units
+        
+    Returns:
+        Brief description of approach challenges, or None if approach is clear
+    """
+    import map.pathfinding as pathfinding
+    
+    # Calculate distance to feature
+    distance = pathfinding.hex_distance(
+        int(friendly_x), int(friendly_y),
+        feature_center[0], feature_center[1]
+    )
+    
+    # If very close (within 2 hexes), don't comment unless blocked
+    if distance <= 2:
+        # Check if enemy is literally on the feature
+        enemies_on_feature = [u for u in enemy_units if (u.x, u.y) in feature_coords]
+        if enemies_on_feature:
+            return f"Occupied by {len(enemies_on_feature)} enemy unit{'s' if len(enemies_on_feature) != 1 else ''}"
+        return None
+    
+    # For distant features, check for enemies in the path
+    # Count enemies within a corridor between friendly position and feature
+    enemies_in_path = []
+    
+    for enemy in enemy_units:
+        # Calculate if enemy is roughly between our forces and the feature
+        dist_from_friendly = pathfinding.hex_distance(
+            int(friendly_x), int(friendly_y),
+            enemy.x, enemy.y
+        )
+        dist_from_feature = pathfinding.hex_distance(
+            enemy.x, enemy.y,
+            feature_center[0], feature_center[1]
+        )
+        
+        # Enemy is "in the way" if it's closer to us than the feature is,
+        # and closer to the feature than we are
+        if dist_from_friendly < distance and dist_from_feature < distance:
+            # Also check angular alignment - enemy should be roughly in the direction of the feature
+            # Use a simple check: total distance shouldn't be much more than direct distance
+            if (dist_from_friendly + dist_from_feature) < (distance * 1.5):
+                enemies_in_path.append(enemy)
+    
+    if len(enemies_in_path) >= 3:
+        return f"Strongly contested - {len(enemies_in_path)} enemy units block the approach"
+    elif len(enemies_in_path) >= 1:
+        return f"Contested - {len(enemies_in_path)} enemy unit{'s' if len(enemies_in_path) != 1 else ''} in the path"
+    elif distance > 5:
+        return f"Distant ({distance} hexes away)"
+    
+    # Clear approach
+    return None
 
 
 def generate_tactical_report_legacy(map, faction: str, unit_list: List = None) -> str:

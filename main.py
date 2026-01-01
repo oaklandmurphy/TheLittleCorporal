@@ -1,5 +1,5 @@
 from map import Map
-from terrain import FIELDS, HILL, RIVER, FOREST
+from map.terrain import FIELDS, HILL, RIVER, FOREST
 from unit import Infantry
 from turnmanager import TurnManager
 from visualization import Visualization, WINDOW_W, WINDOW_H
@@ -166,8 +166,9 @@ def main():
 	
 
 	# specify model
-	gen_model = "llama2:7b"
-	gen_model = "llama3.2:3b"
+	# gen_model = "llama3.1:8b"
+	# gen_model = "llama3.2:3b"
+	gen_model = "llama3-groq-tool-use:8b"
 	# gen_model = "gpt-oss:120b-cloud"
 	# gen_model = "mistral:7b"
 
@@ -177,14 +178,12 @@ def main():
 		"Austrian": General(unit_list=game_map.get_units_by_faction("Austrian"), faction="Austrian", model=gen_model, identity_prompt=yellow_general_preset, ollama_host=host, game_map=game_map)
 	}
 
-	print("0,6 weighted combat adv:", game_map.get_weighted_front_arc_advantage(0, 6, 270))
-
-	frontline_santa_maria = game_map.get_frontline_for_feature("Santa Maria Heights", 240)
-	frontline_san_simone = game_map.get_frontline_for_feature("San Simone Heights", 240)
-	frontline_lodi_river = game_map.get_frontline_for_feature("Lodi Stream", 270)
-	print("get frontline santa maria: ", frontline_santa_maria)
-	print("get frontline san simone: ", frontline_san_simone)
-	print("get frontline lodi river: ", frontline_lodi_river)
+	# frontline_santa_maria = game_map.get_frontline_for_feature("Santa Maria Heights", 240)
+	# frontline_san_simone = game_map.get_frontline_for_feature("San Simone Heights", 240)
+	# frontline_lodi_river = game_map.get_frontline_for_feature("Lodi Stream", 270)
+	# print("get frontline santa maria: ", frontline_santa_maria)
+	# print("get frontline san simone: ", frontline_san_simone)
+	# print("get frontline lodi river: ", frontline_lodi_river)
 
 	# Run the game loop
 	turn_manager.run_game_loop(

@@ -37,7 +37,15 @@ def execute_orders(map_instance, orders_data: Dict[str, Any], faction: str) -> N
         print(f"  → Units: {', '.join(units) if units else 'None'}")
         
         # Route to appropriate handler based on action type
-        _execute_attack(map_instance, target, units, faction)
+        action_handlers = {
+            "Attack": _execute_attack,
+            "Defend": _execute_defend,
+            "Support": _execute_support,
+            "Retreat": _execute_retreat,
+        }
+        
+        handler = action_handlers.get(action_type, _execute_attack)
+        handler(map_instance, target, units, faction)
     
     print(f"\n{'='*60}")
     print(f"[Orders Complete] All orders processed")
@@ -119,85 +127,38 @@ def _execute_advance(map_instance, target: str, units: List[str], faction: str) 
     pass
 
 
-def _execute_withdraw(map_instance, target: str, units: List[str], faction: str) -> None:
-    """Execute a withdraw order.
+def _execute_retreat(map_instance, target: str, units: List[str], faction: str) -> None:
+    """Execute a retreat order.
+    
+    Retreat is the only order that engaged units can execute, allowing them to 
+    disengage from combat. Units will move away from enemies toward the target position.
     
     Args:
         map_instance: The Map instance
-        target: Fallback position or rally point
-        units: List of unit names to withdraw
-        faction: The faction withdrawing
+        target: Fallback position or rally point (can be a feature name or coordinates)
+        units: List of unit names to retreat
+        faction: The faction retreating
     """
-    print(f"  [TODO] Implement withdraw logic for {target}")
-    # TODO: Implement withdraw logic
-    pass
-
-
-def _execute_hold(map_instance, target: str, units: List[str], faction: str) -> None:
-    """Execute a hold order.
+    # Try to interpret target as a feature name first
+    target_coords = map_instance.get_feature_coordinates(target)
     
-    Args:
-        map_instance: The Map instance
-        target: Position to hold
-        units: List of unit names to hold position
-        faction: The faction holding
-    """
-    print(f"  [TODO] Implement hold logic for {target}")
-    # TODO: Implement hold logic
-    pass
-
-
-def _execute_flank(map_instance, target: str, units: List[str], faction: str) -> None:
-    """Execute a flank order.
+    if target_coords:
+        # If it's a feature, use the center of the feature as the destination
+        center_x = sum(x for x, y in target_coords) // len(target_coords)
+        center_y = sum(y for x, y in target_coords) // len(target_coords)
+        destination = (center_x, center_y)
+        print(f"  [Retreat] Retreating toward feature '{target}' at {destination}")
+    else:
+        # Otherwise assume it's coordinates (would need parsing in real implementation)
+        print(f"  [Retreat] Target '{target}' not found as feature, using as-is")
+        # For now, just pick a reasonable fallback
+        destination = (map_instance.width // 2, map_instance.height // 2)
     
-    Args:
-        map_instance: The Map instance
-        target: Target position or enemy to flank
-        units: List of unit names to execute flanking maneuver
-        faction: The faction flanking
-    """
-    print(f"  [TODO] Implement flank logic for {target}")
-    # TODO: Implement flank logic
-    pass
+    for unit_name in units:
+        print(f"  [Retreat] Unit '{unit_name}' ordered to retreat to {destination}")
+        result = map_instance.retreat(unit_name, destination)
+        
+        if not result.get("ok"):
+            reason = result.get("reason", "Unknown")
+            print(f"  [Warning] {unit_name} failed to retreat: {reason}")
 
-
-def _execute_pursue(map_instance, target: str, units: List[str], faction: str) -> None:
-    """Execute a pursue order.
-    
-    Args:
-        map_instance: The Map instance
-        target: Enemy unit or direction to pursue
-        units: List of unit names to pursue
-        faction: The faction pursuing
-    """
-    print(f"  [TODO] Implement pursue logic for {target}")
-    # TODO: Implement pursue logic
-    pass
-
-
-def _execute_screen(map_instance, target: str, units: List[str], faction: str) -> None:
-    """Execute a screen order.
-    
-    Args:
-        map_instance: The Map instance
-        target: Area or position to screen
-        units: List of unit names to form screen
-        faction: The faction screening
-    """
-    print(f"  [TODO] Implement screen logic for {target}")
-    # TODO: Implement screen logic
-    pass
-
-
-def _execute_reconnoiter(map_instance, target: str, units: List[str], faction: str) -> None:
-    """Execute a reconnoiter order.
-    
-    Args:
-        map_instance: The Map instance
-        target: Area to reconnoiter
-        units: List of unit names to scout
-        faction: The faction reconnoitering
-    """
-    print(f"  [TODO] Implement reconnoiter logic for {target}")
-    # TODO: Implement reconnoiter logic
-    pass

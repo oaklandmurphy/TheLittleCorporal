@@ -2,7 +2,7 @@
 
 from typing import Set, Tuple, Optional
 from unit import Unit
-import pathfinding
+import map.pathfinding as pathfinding
 
 
 def check_and_engage_combat(unit: Unit, grid, width: int, height: int) -> None:

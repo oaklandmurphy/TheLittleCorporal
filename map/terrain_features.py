@@ -2,8 +2,8 @@
 
 import random
 from typing import Optional, List, Tuple, Set
-from terrain import HILL_ELEVATION_THRESHOLD, FOREST_TREE_COVER_THRESHOLD
-import pathfinding
+from .terrain import HILL_ELEVATION_THRESHOLD, FOREST_TREE_COVER_THRESHOLD
+from . import pathfinding
 
 
 def label_terrain_features(grid, width: int, height: int, seed: Optional[int] = None,

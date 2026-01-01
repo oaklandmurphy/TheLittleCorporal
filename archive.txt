@@ -1,0 +1,38 @@
+# Name generation — 19th-century Italian terms
+    roots = [
+        # Major Italian rivers
+        "Adda", "Po", "Ticino", "Mincio", "Brenta", "Isonzo", "Adige", "Arno", "Liri",
+        "Sesia", "Oglio", "Tanaro", "Taro", "Nera", "Volturno", "Piave", "Trebbia", "Chiese",
+        "Ofanto", "Bormida", "Scrivia", "Secchia", "Panaro", "Reno", "Tagliamento", "Livenza",
+        "Metauro", "Esino", "Pescara", "Sangro", "Trigno", "Biferno", "Fortore", "Sele",
+        "Bacchiglione", "Brembana", "Serio", "Lambro", "Olona", "Toce", "Dora", "Orco",
+        # Italian cities and towns from Napoleonic era
+        "Mantua", "Verona", "Brescia", "Bergamo", "Cremona", "Pavia", "Lodi", "Milan",
+        "Vicenza", "Padua", "Treviso", "Udine", "Piacenza", "Parma", "Modena", "Ferrara",
+        "Bologna", "Ravenna", "Rimini", "Pesaro", "Ancona", "Macerata", "Ascoli", "Teramo",
+        "Aquila", "Chieti", "Perugia", "Spoleto", "Terni", "Viterbo", "Rieti", "Frosinone",
+        "Latina", "Caserta", "Benevento", "Avellino", "Salerno", "Potenza", "Matera", "Foggia",
+        # Historical Italian regions and provinces
+        "Lombardy", "Venetia", "Piedmont", "Liguria", "Emilia", "Romagna", "Tuscany", "Umbria",
+        "Marche", "Abruzzo", "Molise", "Campania", "Apulia", "Basilicata", "Calabria"
+    ]
+    saints = [
+        "San Marco", "San Pietro", "San Giorgio", "San Luca", "San Paolo", "Santa Maria",
+        "Sant'Anna", "San Michele", "San Carlo", "San Giovanni", "San Giacomo", "San Matteo",
+        "San Filippo", "San Simone", "San Tommaso", "San Bartolomeo", "San Andrea", "San Stefano",
+        "Santa Lucia", "Santa Caterina", "Santa Teresa", "Sant'Antonio", "San Francesco",
+        "San Domenico", "San Bernardo", "San Giuseppe", "Santa Chiara", "Sant'Agostino",
+        "San Benedetto", "San Lorenzo", "San Martino", "San Nicola", "San Rocco", "San Sebastiano",
+        "Santa Monica", "Sant'Ambrogio", "San Gennaro", "San Vittore", "Santa Barbara",
+        "San Cristoforo", "San Donato", "San Fedele", "San Gregorio", "Sant'Eufemia",
+        "San Zeno", "San Biagio", "Sant'Eusebio", "San Protaso", "San Gervaso"
+    ]
+    adjs = [
+        # Italian adjectives - colors, sizes, qualities
+        "Grande", "Piccolo", "Alto", "Basso", "Lungo", "Corto", "Nero", "Verde", "Rosso",
+        "Bianco", "Azzurro", "Bruno", "Grigio", "Dorato", "Argento", "Chiaro", "Scuro",
+        "Nuovo", "Vecchio", "Primo", "Secondo", "Terzo", "Ultimo", "Centrale", "Orientale",
+        "Occidentale", "Settentrionale", "Meridionale", "Superiore", "Inferiore", "Esterno",
+        "Interno", "Maggiore", "Minore", "Estremo", "Medio", "Largo", "Stretto", "Profondo",
+        "Piano", "Ripido", "Dolce", "Aspro", "Fertile", "Arido", "Folto", "Rado"
+    ]

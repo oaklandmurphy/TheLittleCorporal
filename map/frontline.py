@@ -3,7 +3,7 @@
 import heapq
 import math
 from typing import List, Tuple, Optional, Dict, Any
-import pathfinding
+from . import pathfinding
 import combat
 
 
@@ -458,26 +458,32 @@ def identify_defensive_features(map_obj, faction: str,
         feature_y = sum(y for x, y in coords) / len(coords)
         feature_center = (int(feature_x), int(feature_y))
         
-        # Calculate total advantage for all hexes in this feature facing enemies
-        total_advantage = 0.0
-        for x, y in coords:
-            advantage = get_weighted_front_arc_advantage(
-                grid, width, height, x, y, enemy_direction, arc_width_degrees
-            )
-            total_advantage += advantage
+        # Get the endpoints for a potential frontline across the feature
+        endpoints = get_frontline_endpoints(grid, width, height, coords, enemy_direction)
         
-        # Calculate average advantage per hex
-        size = len(coords)
-        average_advantage = total_advantage / size if size > 0 else 0.0
+        if not endpoints:
+            continue
+            
+        start, goal = endpoints
         
+        # Calculate the best frontline and its advantage
+        frontline_data = get_best_frontline_with_advantage(
+            grid, width, height, start, goal, enemy_direction, arc_width_degrees
+        )
+        
+        if not frontline_data or not frontline_data['frontline']:
+            continue
+
         defensive_features.append({
             'feature_name': feature_name,
             'feature_coords': coords,
             'feature_center': feature_center,
             'enemy_direction': enemy_direction,
-            'total_advantage': total_advantage,
-            'average_advantage': average_advantage,
-            'size': size
+            'total_advantage': frontline_data['total_advantage'],
+            'average_advantage': frontline_data['average_advantage'],
+            'size': len(coords),
+            'frontline': frontline_data['frontline'],
+            'frontline_length': frontline_data['length']
         })
     
     # Sort by total advantage (best defensive features first)

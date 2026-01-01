@@ -35,7 +35,7 @@ import sys
 # Import your game model classes (adjust imports if you placed them in a package)
 from map import Map        # Map, Hex hexs with .terrain and .unit
 from unit import Unit     # Unit class (or specific subclasses)
-from terrain import FIELDS, FOREST, RIVER, HILL
+from map.terrain import FIELDS, FOREST, RIVER, HILL
 
 # Visual configuration
 WINDOW_W = 1000
