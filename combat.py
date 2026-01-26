@@ -1,6 +1,5 @@
 """Combat resolution logic for hexagonal grid warfare."""
 
-from typing import Set, Tuple, Optional
 from unit import Unit
 import map.pathfinding as pathfinding
 
@@ -19,116 +18,59 @@ def check_and_engage_combat(unit: Unit, grid, width: int, height: int) -> None:
             continue
         enemy = grid[ny][nx].unit
         if enemy and enemy.faction != unit.faction:
-            # Both units become engaged
-            unit.engaged = True
-            enemy.engaged = True
+            # add an egaged unit
+            unit.engagement += 1
             print(f"{unit.name} engages {enemy.name}!")
 
 
-def check_all_engagements(grid, width: int, height: int) -> None:
-    """Check all units on the map and engage adjacent enemies.
+def check_all_engagements(faction1_units: list, faction2_units: list, grid, width: int, height: int) -> None:
+    """Check units from both factions and engage adjacent enemies, with evenly distributed resolution.
     
     Args:
+        faction1_units: List of units from the first faction
+        faction2_units: List of units from the second faction
         grid: The 2D grid of Hex objects
         width: Width of the map
         height: Height of the map
     """
-    processed = set()
-    for y in range(height):
-        for x in range(width):
-            unit = grid[y][x].unit
-            if not unit or (x, y) in processed:
-                continue
-            
-            # Check for adjacent enemies
-            for nx, ny in pathfinding.get_neighbors(x, y):
-                if not (0 <= nx < width and 0 <= ny < height):
-                    continue
-                enemy = grid[ny][nx].unit
-                if enemy and enemy.faction != unit.faction:
-                    # Both units become engaged
-                    unit.engaged = True
-                    enemy.engaged = True
-                    if (nx, ny) not in processed:
-                        print(f"{unit.name} engages {enemy.name}!")
-                    processed.add((x, y))
-                    processed.add((nx, ny))
+    # assign engagements for faction 1
+    faction1_engaged_units = []
+    
+    for _, unit in faction1_units:
+           # engage adjacent enemies
+           check_and_engage_combat(unit, grid, width, height)
+           faction1_engaged_units.append(unit)
 
+    # assign engagements for faction 2
+    faction2_engaged_units = []
 
-def apply_engagement_damage(grid, width: int, height: int) -> None:
-    """Apply combat damage to all engaged units.
+    for _, unit in faction2_units:
+           # engage adjacent enemies
+           check_and_engage_combat(unit, grid, width, height)
+           faction2_engaged_units.append(unit)
+    
+    engaged_units = faction1_engaged_units + faction2_engaged_units
+    
+    # Process units in the interleaved order
+    for unit in engaged_units:
+        resolve_combat_for_unit(unit, grid, width, height)
+
+def resolve_combat_for_unit(unit: Unit, grid, width: int, height: int) -> None:
+    """Resolve combat for a single unit against adjacent enemies.
     
     Args:
+        unit: The unit to resolve combat for
         grid: The 2D grid of Hex objects
         width: Width of the map
         height: Height of the map
     """
-    processed = set()
-    for y in range(height):
-        for x in range(width):
-            unit = grid[y][x].unit
-            if not unit or not unit.engaged or (x, y) in processed:
-                continue
-            
-            # Find adjacent engaged enemies
-            for nx, ny in pathfinding.get_neighbors(x, y):
-                if not (0 <= nx < width and 0 <= ny < height):
-                    continue
-                enemy = grid[ny][nx].unit
-                if enemy and enemy.faction != unit.faction and enemy.engaged:
-                    # Avoid processing the same pair twice
-                    if (nx, ny) in processed:
-                        continue
-                    
-                    # Calculate combat power for both units
-                    unit_power = 1  # unit.combat_power(get_terrain(unit.x, unit.y))
-                    enemy_power = 1  # enemy.combat_power(get_terrain(enemy.x, enemy.y))
-                    
-                    # Apply damage
-                    damage_to_enemy = max(1, int(unit_power / 10))
-                    damage_to_unit = max(1, int(enemy_power / 10))
-                    
-                    print(f"Combat: {unit.name} (power {unit_power:.1f}) vs {enemy.name} (power {enemy_power:.1f})")
-                    
-                    enemy.take_damage(damage_to_enemy)
-                    unit.take_damage(damage_to_unit)
-                    
-                    # Remove routed units
-                    if enemy.is_routed():
-                        grid[ny][nx].unit = None
-                    if unit.is_routed():
-                        grid[y][x].unit = None
-                    
-                    # Mark both as processed
-                    processed.add((x, y))
-                    processed.add((nx, ny))
-                    break  # Only process one enemy per unit per turn
-
-
-def resolve_adjacent_combat(grid, width: int, height: int) -> None:
-    """Make adjacent enemy units engage in combat.
-    
-    Args:
-        grid: The 2D grid of Hex objects
-        width: Width of the map
-        height: Height of the map
-    """
-    processed = set()
-    for y in range(height):
-        for x in range(width):
-            unit = grid[y][x].unit
-            if not unit or (x, y) in processed:
-                continue
-            for nx, ny in pathfinding.get_neighbors(x, y):
-                if not (0 <= nx < width and 0 <= ny < height):
-                    continue
-                enemy = grid[ny][nx].unit
-                if enemy and enemy.faction != unit.faction:
-                    print(f"{unit.name} engages {enemy.name} in combat!")
-                    combat(unit, enemy, grid)
-                    processed.add((x, y))
-                    processed.add((nx, ny))
-
+    for nx, ny in pathfinding.get_neighbors(unit.x, unit.y):
+        if not (0 <= nx < width and 0 <= ny < height):
+            continue
+        enemy = grid[ny][nx].unit
+        if enemy and enemy.faction != unit.faction:
+            print(f"{unit.name} engages {enemy.name} in combat!")
+            combat(unit, enemy, grid)
 
 def combat(attacker: Unit, defender: Unit, grid) -> None:
     """Simple mutual combat between two units.
