@@ -135,12 +135,14 @@ def best_reachable_toward(unit: Unit, target: Tuple[int, int], grid, width: int,
     if not reachable:
         return None
     best_hex = None
+    best_cost = 0
     best_dist = float("inf")
-    for (rx, ry), _cost in reachable.items():
+    for (rx, ry), cost in reachable.items():
         if (rx, ry) == (unit.x, unit.y):
             continue
         dist = hex_distance(rx, ry, target[0], target[1])
-        if dist < best_dist:
+        if dist < best_dist or (dist == best_dist and cost < best_cost):
+            best_cost = cost
             best_dist = dist
             best_hex = (rx, ry)
     return best_hex

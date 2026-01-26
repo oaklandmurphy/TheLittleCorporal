@@ -103,7 +103,7 @@ class Map:
             True if the unit was successfully moved, False otherwise
         """
         # Engaged units cannot move unless explicitly allowed (e.g., for retreat)
-        if unit.engaged and not allow_engaged:
+        if unit.engagement and not allow_engaged:
             print(f"{unit.name} is engaged in combat and cannot move!")
             return False
             
@@ -213,7 +213,7 @@ class Map:
         # Use allow_engaged=True to permit engaged units to move during retreat
         moved = self.move_unit(unit, best_hex[0], best_hex[1], allow_engaged=True)
         
-        if moved and unit.engaged:
+        if moved and unit.engagement:
             print(f"{unit.name} retreats from combat!")
         
         return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
@@ -225,7 +225,7 @@ class Map:
             return {"ok": False, "error": "Unit not found"}
         
         # Check if unit is engaged - engaged units cannot execute march orders
-        if unit.engaged:
+        if unit.engagement:
             return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], 
                     "reason": "Unit is engaged in combat and cannot march"}
         
@@ -402,7 +402,7 @@ class Map:
                     "position": [u.x, u.y],
                     "size": u.size,
                     "mobility": u.mobility,
-                    "engaged": u.engaged,
+                    "engaged": u.engagement,
                     "on_frontline": u in frontline_units
                 }
                 for u in friendly_units

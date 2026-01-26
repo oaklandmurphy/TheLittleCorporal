@@ -565,4 +565,3 @@ class Visualization:
                         if pair not in processed_pairs:
                             processed_pairs.add(pair)
                             draw_combat_indicator(col, row, nx, ny)
-
