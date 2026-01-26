@@ -10,7 +10,6 @@ from . import pathfinding, terrain_features, frontline
 import combat
 import orders 
 
-
 class Map:
 
     def list_feature_names(self) -> list[str]:
@@ -21,6 +20,7 @@ class Map:
                 for fname in self.grid[y][x].features:
                     features.add(fname)
         return sorted(features)
+    
     def get_feature_coordinates(self, feature_name: str) -> list[tuple[int, int]]:
         """Return a list of (x, y) coordinates that make up the given feature name."""
         coords = []
@@ -48,6 +48,15 @@ class Map:
             return self.grid[y][x]
         return None
     
+    def get_units(self) -> list[Unit]:
+        """Return a list of all unit objects on the map."""
+        units = []
+        for row in self.grid:
+            for hex in row:
+                if hex.unit:
+                    units.append(hex.unit)
+        return units
+    
     def get_units_by_faction(self, faction: str) -> list[Unit]:
         """Return a list of unit objects on the map that match the given faction."""
         units = []
@@ -56,6 +65,7 @@ class Map:
                 if hex.unit and hex.unit.faction == faction:
                     units.append(hex.unit)
         return units
+    
     # --- Unit management ---
     def place_unit(self, unit: Unit, x: int, y: int) -> bool:
         if not (0 <= x < self.width and 0 <= y < self.height):
@@ -66,6 +76,19 @@ class Map:
         tile.unit = unit
         unit.x, unit.y = x, y
         return True
+
+    def teleport_unit(self, unit: Unit, x: int, y: int, cost: int) -> bool:
+        """
+        Instantly move a unit to (x, y) without pathfinding checks.
+        Args:
+            unit: The unit to move
+            x: Target x coordinate
+            y: Target y coordinate
+            cost: Movement cost to deduct from unit's mobility
+        """
+        self.grid[unit.y][unit.x].unit = None
+        self.grid[y][x].unit = unit
+        unit.move(x, y, cost)
 
     def move_unit(self, unit: Unit, target_x: int, target_y: int, allow_engaged: bool = False) -> bool:
         """Move a unit if reachable within its mobility using Dijkstra's algorithm.
@@ -88,29 +111,28 @@ class Map:
         if (target_x, target_y) not in reachable:
             return False  # too far or occupied
 
-        self.grid[unit.y][unit.x].unit = None
-        self.grid[target_y][target_x].unit = unit
-        unit.move(target_x, target_y, reachable[(target_x, target_y)])
+        self.teleport_unit(unit, target_x, target_y, reachable[(target_x, target_y)])
+
+        # Handle stances
+        if unit.stance == "aggressive":
+            aggressive_move = self._best_reachable_toward(unit, self._nearest_enemy_pos(unit), max_cost=unit.mobility//2)
+            if aggressive_move:
+                self.teleport_unit(unit, aggressive_move[0], aggressive_move[1], reachable[(target_x, target_y)])
+
+        elif unit.stance == "evasive":
+            x = 1
+            # TODO
+
         return True
 
     def check_and_engage_combat(self, unit: Unit):
         """Check if a unit is adjacent to enemy units and engage them in combat."""
         combat.check_and_engage_combat(unit, self.grid, self.width, self.height)
 
-    def check_all_engagements(self, faction1: str, faction2: str):
-        """Check all units on the map and engage adjacent enemies.
-        
-        Args:
-            faction1: Name of the first faction
-            faction2: Name of the second faction
-        """
-        faction1_units = self.get_units_by_faction(faction1)
-        faction2_units = self.get_units_by_faction(faction2)
-        combat.check_all_engagements(faction1_units, faction2_units, self.grid, self.width, self.height)
+    def check_all_engagements(self):
+        """Check all units on the map and engage adjacent enemies."""
 
-    def apply_engagement_damage(self):
-        """Apply combat damage to all engaged units."""
-        combat.apply_engagement_damage(self.grid, self.width, self.height)
+        combat.check_all_engagements(self.get_units(), self.grid, self.width, self.height)
 
     # --- Staff Officer movement helpers and actions ---
     def _hex_distance(self, x1: int, y1: int, x2: int, y2: int) -> int:
@@ -118,10 +140,9 @@ class Map:
         return pathfinding.hex_distance(x1, y1, x2, y2)
 
     def _find_unit_by_name(self, name: str) -> Optional[Unit]:
-        for row in self.grid:
-            for hex in row:
-                if hex.unit and hex.unit.name == name:
-                    return hex.unit
+        for unit in self.get_units():
+            if unit.name == name:
+                return unit
         return None
 
     def _nearest_enemy_pos(self, unit: Unit) -> Optional[Tuple[int, int]]:
@@ -136,131 +157,8 @@ class Map:
                         best_d, best = d, (x, y)
         return best
 
-    def _direction_offsets(self, y: int) -> List[Tuple[int, int]]:
-        """Return the 6 neighbor direction offsets in order, matching get_neighbors order."""
-        return pathfinding.direction_offsets(y)
-
-    def _desired_along_direction(self, x: int, y: int, dir_index: int, steps: int = 1) -> Tuple[int, int]:
-        dx, dy = self._direction_offsets(y)[dir_index % 6]
-        tx, ty = x, y
-        for _ in range(max(1, steps)):
-            tx += dx
-            ty += dy
-        return tx, ty
-
     def _best_reachable_toward(self, unit: Unit, target: Tuple[int, int], max_cost: Optional[int] = None) -> Optional[Tuple[int, int]]:
         return pathfinding.best_reachable_toward(unit, target, self.grid, self.width, self.height, max_cost)
-
-    # def advance(self, unit_name: str, destination: Tuple[int, int]) -> dict:
-    #     """Advance the named unit toward a destination hex using pathfinding."""
-    #     unit = self._find_unit_by_name(unit_name)
-    #     if not unit:
-    #         return {"ok": False, "error": "Unit not found"}
-    #     target = (int(destination[0]), int(destination[1]))
-    #     # Move to destination if in range, otherwise get closest reachable toward it
-    #     reachable = self.find_reachable_hexes(unit)
-    #     if target in reachable:
-    #         moved = self.move_unit(unit, *target)
-    #         return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
-    #     best = self._best_reachable_toward(unit, target)
-    #     if not best:
-    #         return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No reachable hex"}
-    #     moved = self.move_unit(unit, best[0], best[1])
-    #     return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
-
-    # def retreat(self, unit_name: str, destination: Tuple[int, int]) -> dict:
-    #     """Fall back toward a designated destination, preferring to increase distance from the nearest enemy."""
-    #     unit = self._find_unit_by_name(unit_name)
-    #     if not unit:
-    #         return {"ok": False, "error": "Unit not found"}
-    #     dest = (int(destination[0]), int(destination[1]))
-    #     enemy_pos = self._nearest_enemy_pos(unit)
-    #     reachable = self.find_reachable_hexes(unit)
-    #     if not reachable:
-    #         return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No reachable hex"}
-    #     # Score: maximize distance to enemy (if known), then minimize distance to destination
-    #     best_hex = None
-    #     best_score = None
-    #     for (rx, ry) in reachable.keys():
-    #         if (rx, ry) == (unit.x, unit.y):
-    #             continue
-    #         dist_enemy = self._hex_distance(rx, ry, enemy_pos[0], enemy_pos[1]) if enemy_pos else 0
-    #         dist_dest = self._hex_distance(rx, ry, dest[0], dest[1])
-    #         score = (dist_enemy, -dist_dest)
-    #         if best_score is None or score > best_score:
-    #             best_score = score
-    #             best_hex = (rx, ry)
-    #     if not best_hex:
-    #         return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No better hex"}
-    #     moved = self.move_unit(unit, best_hex[0], best_hex[1])
-    #     return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
-
-    # def flank_left(self, unit_name: str, destination: Tuple[int, int]) -> dict:
-    #     """Flank left toward a destination by biasing the path to the left of the main approach."""
-    #     unit = self._find_unit_by_name(unit_name)
-    #     if not unit:
-    #         return {"ok": False, "error": "Unit not found"}
-    #     dest = (int(destination[0]), int(destination[1]))
-    #     # determine forward direction as neighbor reducing distance to destination most
-    #     dirs = self._direction_offsets(unit.y)
-    #     best_dir = 0
-    #     best_reduction = -1
-    #     curd = self._hex_distance(unit.x, unit.y, dest[0], dest[1])
-    #     for i, (dx, dy) in enumerate(dirs):
-    #         nx, ny = unit.x + dx, unit.y + dy
-    #         if not (0 <= nx < self.width and 0 <= ny < self.height):
-    #             continue
-    #         nd = self._hex_distance(nx, ny, dest[0], dest[1])
-    #         red = curd - nd
-    #         if nd < curd and red > best_reduction and self.grid[ny][nx].unit is None:
-    #             best_reduction = red
-    #             best_dir = i
-    #     left_dir = (best_dir - 1) % 6
-    #     desired = self._desired_along_direction(unit.x, unit.y, left_dir, 1)
-    #     best = self._best_reachable_toward(unit, desired)
-    #     if not best:
-    #         # fallback toward destination normally
-    #         best = self._best_reachable_toward(unit, dest)
-    #         if not best:
-    #             return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No flank path"}
-    #     moved = self.move_unit(unit, best[0], best[1])
-    #     return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
-
-    # def flank_right(self, unit_name: str, destination: Tuple[int, int]) -> dict:
-    #     """Flank right toward a destination by biasing the path to the right of the main approach."""
-    #     unit = self._find_unit_by_name(unit_name)
-    #     if not unit:
-    #         return {"ok": False, "error": "Unit not found"}
-    #     dest = (int(destination[0]), int(destination[1]))
-    #     dirs = self._direction_offsets(unit.y)
-    #     best_dir = 0
-    #     best_reduction = -1
-    #     curd = self._hex_distance(unit.x, unit.y, dest[0], dest[1])
-    #     for i, (dx, dy) in enumerate(dirs):
-    #         nx, ny = unit.x + dx, unit.y + dy
-    #         if not (0 <= nx < self.width and 0 <= ny < self.height):
-    #             continue
-    #         nd = self._hex_distance(nx, ny, dest[0], dest[1])
-    #         red = curd - nd
-    #         if nd < curd and red > best_reduction and self.grid[ny][nx].unit is None:
-    #             best_reduction = red
-    #             best_dir = i
-    #     right_dir = (best_dir + 1) % 6
-    #     desired = self._desired_along_direction(unit.x, unit.y, right_dir, 1)
-    #     best = self._best_reachable_toward(unit, desired)
-    #     if not best:
-    #         best = self._best_reachable_toward(unit, dest)
-    #         if not best:
-    #             return {"ok": False, "unit": unit.name, "position": [unit.x, unit.y], "reason": "No flank path"}
-    #     moved = self.move_unit(unit, best[0], best[1])
-    #     return {"ok": bool(moved), "unit": unit.name, "position": [unit.x, unit.y]}
-
-    # def hold(self, unit_name: str, destination: Tuple[int, int]) -> dict:
-    #     """Order the unit to hold position (no movement). Destination is accepted but not used."""
-    #     unit = self._find_unit_by_name(unit_name)
-    #     if not unit:
-    #         return {"ok": False, "error": "Unit not found"}
-    #     return {"ok": True, "unit": unit.name, "position": [unit.x, unit.y]}
 
     def retreat(self, unit_name: str, destination: Tuple[int, int]) -> dict:
         """Order the unit to retreat toward a destination, moving away from enemies.
@@ -522,41 +420,6 @@ class Map:
                 for u in enemy_units
             ],
             "terrain_features": self.list_feature_names()
-        }
-
-    def get_decision_options(self, faction: str) -> dict:
-        """Provide structured decision options rather than free-form orders.
-        
-        Args:
-            faction: The faction making decisions
-            
-        Returns:
-            Dictionary with situation assessment and strategic options
-        """
-        tactical_sit = self.get_tactical_situation(faction)
-        
-        options = {
-            "defensive": {
-                "description": "Hold key terrain and repel enemy advances",
-                "suggested_actions": ["hold", "defend", "support"]
-            },
-            "offensive": {
-                "description": "Push forward and seize objectives",
-                "suggested_actions": ["advance", "attack", "flank_left", "flank_right"]
-            },
-            "delaying": {
-                "description": "Slow enemy advance while preserving forces",
-                "suggested_actions": ["screen", "withdraw", "retreat"]
-            },
-            "maneuver": {
-                "description": "Reposition forces for advantage",
-                "suggested_actions": ["march", "concentrate", "redeploy"]
-            }
-        }
-        
-        return {
-            "situation": tactical_sit,
-            "strategic_options": options
         }
 
     def get_battlefield_summary(self, faction: str) -> str:

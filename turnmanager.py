@@ -19,12 +19,7 @@ class TurnManager:
 
     def all_units(self):
         """Collect all units currently on the map."""
-        units = []
-        for row in self.map.grid:
-            for hex in row:
-                if hex.unit:
-                    units.append(hex.unit)
-        return units
+        return self.map.get_units()
 
     def process_turn_start(self):
         """Execute turn start sequence: engagement check, reset mobility, apply combat damage."""
@@ -42,11 +37,11 @@ class TurnManager:
         # 3. Check for all units engagement status then engaged units deal damage to each other
         # Pass all factions to check engagements (assuming 2-faction game)
         if len(self.factions) >= 2:
-            self.map.check_all_engagements(self.factions[0], self.factions[1])
+            self.map.check_all_engagements()
         
-        # 4. Reset mobility for current faction's units
+        # 4. Reset mobility and set new stats for current faction's units
         for unit in self.all_units():
-            unit.reset_mobility()
+            unit.reset()
 
     def advance_to_next_faction(self):
         """Move to the next faction's turn."""

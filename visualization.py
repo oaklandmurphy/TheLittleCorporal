@@ -541,7 +541,7 @@ class Visualization:
         for row in range(self.game_map.height):
             for col in range(self.game_map.width):
                 hex = self.game_map.get_hex(col, row)
-                if not hex or not hex.unit or not hex.unit.engaged:
+                if not hex or not hex.unit or not hex.unit.engagement:
                     continue
                 
                 unit = hex.unit
@@ -558,7 +558,7 @@ class Visualization:
                     enemy = neighbor_hex.unit
                     
                     # Check if this is an engaged enemy pair
-                    if enemy.faction != unit.faction and enemy.engaged:
+                    if enemy.faction != unit.faction and enemy.engagement:
                         # Create a sorted tuple to avoid drawing the same pair twice
                         pair = tuple(sorted([(col, row), (nx, ny)]))
                         

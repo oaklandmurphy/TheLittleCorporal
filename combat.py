@@ -23,7 +23,7 @@ def check_and_engage_combat(unit: Unit, grid, width: int, height: int) -> None:
             print(f"{unit.name} engages {enemy.name}!")
 
 
-def check_all_engagements(faction1_units: list, faction2_units: list, grid, width: int, height: int) -> None:
+def check_all_engagements(units: list, grid, width: int, height: int) -> None:
     """Check units from both factions and engage adjacent enemies, with evenly distributed resolution.
     
     Args:
@@ -33,23 +33,14 @@ def check_all_engagements(faction1_units: list, faction2_units: list, grid, widt
         width: Width of the map
         height: Height of the map
     """
-    # assign engagements for faction 1
-    faction1_engaged_units = []
-    
-    for _, unit in faction1_units:
+
+    # assign engagements
+    engaged_units = []
+
+    for unit in units:
            # engage adjacent enemies
            check_and_engage_combat(unit, grid, width, height)
-           faction1_engaged_units.append(unit)
-
-    # assign engagements for faction 2
-    faction2_engaged_units = []
-
-    for _, unit in faction2_units:
-           # engage adjacent enemies
-           check_and_engage_combat(unit, grid, width, height)
-           faction2_engaged_units.append(unit)
-    
-    engaged_units = faction1_engaged_units + faction2_engaged_units
+           engaged_units.append(unit)
     
     # Process units in the interleaved order
     for unit in engaged_units:
@@ -86,6 +77,7 @@ def combat(attacker: Unit, defender: Unit, grid) -> None:
     damage_to_def = max(1, int(att_power / 10))
     damage_to_att = max(1, int(def_power / 10))
 
+    # note that damage isnt applied til reset
     defender.take_damage(damage_to_def)
     attacker.take_damage(damage_to_att)
 

@@ -116,21 +116,6 @@ def _execute_support(map_instance, target: str, units: List[str], faction: str) 
     # TODO: Implement support logic
     pass
 
-
-def _execute_advance(map_instance, target: str, units: List[str], faction: str) -> None:
-    """Execute an advance order.
-    
-    Args:
-        map_instance: The Map instance
-        target: Target feature to advance toward
-        units: List of unit names to advance
-        faction: The faction advancing
-    """
-    print(f"  [TODO] Implement advance logic for {target}")
-    # TODO: Implement advance logic
-    pass
-
-
 def _execute_retreat(map_instance, target: str, units: List[str], faction: str) -> None:
     """Execute a retreat order.
     
@@ -165,4 +150,3 @@ def _execute_retreat(map_instance, target: str, units: List[str], faction: str) 
         if not result.get("ok"):
             reason = result.get("reason", "Unknown")
             print(f"  [Warning] {unit_name} failed to retreat: {reason}")
-

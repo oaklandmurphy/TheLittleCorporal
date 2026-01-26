@@ -15,9 +15,8 @@ def get_neighbors(x: int, y: int) -> Generator[Tuple[int, int], None, None]:
     Yields:
         Tuples of (x, y) coordinates for each neighbor
     """
-    offsets_even = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, -1), (-1, -1)]
-    offsets_odd = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (-1, +1)]
-    offsets = offsets_odd if x % 2 else offsets_even
+
+    offsets = direction_offsets(y)
     for dx, dy in offsets:
         yield x + dx, y + dy
 
@@ -43,7 +42,7 @@ def hex_distance(x1: int, y1: int, x2: int, y2: int) -> int:
 
 
 def direction_offsets(y: int) -> List[Tuple[int, int]]:
-    """Return the 6 neighbor direction offsets in order, matching get_neighbors order.
+    """Return the 6 neighbor direction offsets in order.
     
     Args:
         y: Row coordinate (used to determine even/odd row)
