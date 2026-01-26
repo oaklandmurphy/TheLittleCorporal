@@ -80,7 +80,11 @@ def _execute_attack(map_instance, target: str, units: List[str], faction: str) -
         print(f"  [Error] Could not determine attack positions for '{target}'")
         return
     print(f"  [Info] Assigned attack positions: {destinations}")
-    for unit_name, dest in zip(units, destinations):
+    
+    # Assign units to destinations optimally (minimizing total distance)
+    assignments = map_instance.assign_units_to_destinations_optimally(units, destinations)
+    
+    for unit_name, dest in assignments:
         print(f"  [Attack] Unit '{unit_name}' assigned to attack at {dest}")
         map_instance.march(unit_name, dest)
 

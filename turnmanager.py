@@ -37,20 +37,19 @@ class TurnManager:
         
         # 2. Reset engagement flags from previous turn
         for unit in self.all_units():
-            unit.engaged = False
+            unit.engagement = 0
         
-        # 3. Check for all units engagement status and reset movement
-        self.map.check_all_engagements()
+        # 3. Check for all units engagement status then engaged units deal damage to each other
+        # Pass all factions to check engagements (assuming 2-faction game)
+        if len(self.factions) >= 2:
+            self.map.check_all_engagements(self.factions[0], self.factions[1])
         
-        # Reset mobility for current faction's units
+        # 4. Reset mobility for current faction's units
         for unit in self.all_units():
             if unit.faction == current_faction:
                 if hasattr(unit, "set_mobility"):
-                    unit.set_mobility()
+                    unit.reset_mobility()
                 unit.has_moved = False
-        
-        # 4. Engaged units deal damage to each other
-        self.map.apply_engagement_damage()
 
     def advance_to_next_faction(self):
         """Move to the next faction's turn."""

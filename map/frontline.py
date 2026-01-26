@@ -7,6 +7,115 @@ from . import pathfinding
 import combat
 
 
+def assign_units_to_destinations_optimally(
+    map_instance, 
+    units: List[str], 
+    destinations: List[Tuple[int, int]]
+) -> List[Tuple[str, Tuple[int, int]]]:
+    """Assign units to destinations to minimize total distance moved.
+    
+    Uses the Hungarian algorithm for optimal assignment when scipy is available,
+    otherwise falls back to a greedy approach.
+    
+    Args:
+        map_instance: The Map instance (used to find units by name)
+        units: List of unit names
+        destinations: List of (x, y) destination coordinates
+        
+    Returns:
+        List of (unit_name, destination) tuples representing the optimal assignment
+    """
+    if not units or not destinations:
+        return []
+    
+    # Get unit positions
+    unit_positions = []
+    valid_units = []
+    for unit_name in units:
+        unit = map_instance._find_unit_by_name(unit_name)
+        if unit and unit.x is not None and unit.y is not None:
+            unit_positions.append((unit.x, unit.y))
+            valid_units.append(unit_name)
+        else:
+            print(f"  [Warning] Unit '{unit_name}' not found or has no position")
+    
+    if not valid_units:
+        return []
+    
+    # Build cost matrix: cost[i][j] = distance from unit i to destination j
+    n_units = len(valid_units)
+    n_dests = len(destinations)
+    
+    cost_matrix = []
+    for i, (ux, uy) in enumerate(unit_positions):
+        row = []
+        for j, (dx, dy) in enumerate(destinations):
+            dist = pathfinding.hex_distance(ux, uy, dx, dy)
+            row.append(dist)
+        cost_matrix.append(row)
+    
+    # Try to use scipy's Hungarian algorithm for optimal solution
+    try:
+        from scipy.optimize import linear_sum_assignment
+        
+        # Handle rectangular matrices by padding if necessary
+        if n_units != n_dests:
+            # Pad to make square matrix with high cost dummy entries
+            max_dim = max(n_units, n_dests)
+            max_cost = max(max(row) for row in cost_matrix) + 1 if cost_matrix else 1
+            
+            padded_matrix = []
+            for i in range(max_dim):
+                row = []
+                for j in range(max_dim):
+                    if i < n_units and j < n_dests:
+                        row.append(cost_matrix[i][j])
+                    else:
+                        row.append(max_cost * 1000)  # High cost for dummy assignments
+                padded_matrix.append(row)
+            cost_matrix = padded_matrix
+        
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        
+        # Build assignment list, filtering out dummy assignments
+        assignments = []
+        for i, j in zip(row_ind, col_ind):
+            if i < n_units and j < n_dests:
+                assignments.append((valid_units[i], destinations[j]))
+        
+        return assignments
+        
+    except ImportError:
+        # Fallback: Greedy algorithm (not optimal but reasonable)
+        print("  [Info] scipy not available, using greedy assignment")
+        
+        assignments = []
+        remaining_units = list(range(n_units))
+        remaining_dests = list(range(n_dests))
+        
+        while remaining_units and remaining_dests:
+            # Find the minimum cost pair among remaining units and destinations
+            best_cost = float('inf')
+            best_unit_idx = None
+            best_dest_idx = None
+            
+            for ui in remaining_units:
+                for di in remaining_dests:
+                    if cost_matrix[ui][di] < best_cost:
+                        best_cost = cost_matrix[ui][di]
+                        best_unit_idx = ui
+                        best_dest_idx = di
+            
+            if best_unit_idx is not None and best_dest_idx is not None:
+                assignments.append((valid_units[best_unit_idx], destinations[best_dest_idx]))
+                remaining_units.remove(best_unit_idx)
+                remaining_dests.remove(best_dest_idx)
+            else:
+                break
+        
+        return assignments
+
+
 def hex_to_cartesian(col: int, row: int) -> Tuple[float, float]:
     """Convert even-q hex coordinates to Cartesian coordinates.
     

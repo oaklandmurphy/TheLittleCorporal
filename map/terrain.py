@@ -17,7 +17,7 @@ class Terrain:
     
     def getDefenseModifier(self):
         """Returns the combat modifier for defense calculations."""
-        return min(self.urbanization + self.entrenchments, 5)
+        return min(self.urbanization + self.entrenchments + self.tree_cover, 5)
     
     def getOffenseModifier(self, enemy_elevation: int):
         """Returns the combat modifier for offense calculations."""

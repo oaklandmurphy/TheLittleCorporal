@@ -86,7 +86,7 @@ def generate_strategic_overview(map, faction: str, unit_list: List = None) -> st
         unit_desc = unit.status_general()
         
         # Add engagement status
-        if unit.engaged:
+        if unit.engagement:
             engagement_status = " Currently engaged in combat. This unit will not respond to any order type except Retreat"
         else:
             engagement_status = " Not engaged."

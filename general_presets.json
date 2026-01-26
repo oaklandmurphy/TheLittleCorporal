@@ -5,8 +5,12 @@
 		"Retreat"
 	],
 
-    "action_names_unit": [
+    "action_names_enemy_unit": [
         "Attack",
+        "Support"
+    ],
+
+	"action_names_friendly_unit": [
         "Support"
     ],
 	

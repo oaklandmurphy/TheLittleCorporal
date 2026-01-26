@@ -30,48 +30,6 @@ class Map:
                     coords.append((x, y))
         return coords
 
-    def describe_feature(self, feature_name: str) -> str:
-        """Return an English description of the feature: terrain type, units present, nearby units, and coordinates."""
-        coords = self.get_feature_coordinates(feature_name)
-        if not coords:
-            return f"No feature named '{feature_name}' found."
-
-        # Determine terrain type (majority terrain among feature hexes)
-        terrain_count = {}
-        for x, y in coords:
-            tname = self.grid[y][x].terrain.name
-            terrain_count[tname] = terrain_count.get(tname, 0) + 1
-        terrain_type = max(terrain_count, key=terrain_count.get)
-
-        # Units present on the feature
-        units_on = []
-        for x, y in coords:
-            unit = self.grid[y][x].unit
-            if unit:
-                units_on.append(f"{unit.name} ({unit.faction}) at ({x},{y})")
-
-        # Units near the feature (adjacent to any feature hex, but not on it)
-        units_near = set()
-        for x, y in coords:
-            for nx, ny in self.get_neighbors(x, y):
-                if (nx, ny) not in coords and 0 <= nx < self.width and 0 <= ny < self.height:
-                    nunit = self.grid[ny][nx].unit
-                    if nunit:
-                        units_near.add(f"{nunit.name} ({nunit.faction}) at ({nx},{ny})")
-
-        desc = f"Feature '{feature_name}':\n"
-        desc += f"  Terrain type: {terrain_type}\n"
-        desc += f"  Hexes: {coords}\n"
-        if units_on:
-            desc += f"  Units present: {', '.join(units_on)}\n"
-        else:
-            desc += "  Units present: None\n"
-        if units_near:
-            desc += f"  Units nearby: {', '.join(units_near)}\n"
-        else:
-            desc += "  Units nearby: None\n"
-        return desc
-
     """Hexagonal grid storing terrain and units, with pathfinding and combat logic."""
     def __init__(self, width: int, height: int):
         self.width = width
@@ -139,126 +97,20 @@ class Map:
         """Check if a unit is adjacent to enemy units and engage them in combat."""
         combat.check_and_engage_combat(unit, self.grid, self.width, self.height)
 
-    def check_all_engagements(self):
-        """Check all units on the map and engage adjacent enemies."""
-        combat.check_all_engagements(self.grid, self.width, self.height)
+    def check_all_engagements(self, faction1: str, faction2: str):
+        """Check all units on the map and engage adjacent enemies.
+        
+        Args:
+            faction1: Name of the first faction
+            faction2: Name of the second faction
+        """
+        faction1_units = self.get_units_by_faction(faction1)
+        faction2_units = self.get_units_by_faction(faction2)
+        combat.check_all_engagements(faction1_units, faction2_units, self.grid, self.width, self.height)
 
     def apply_engagement_damage(self):
         """Apply combat damage to all engaged units."""
         combat.apply_engagement_damage(self.grid, self.width, self.height)
-
-    def move_units_toward_destinations(self, movement_orders: dict) -> dict:
-        """Move units toward their destination hexes in order.
-        
-        Args:
-            movement_orders: Dictionary with structure:
-                {
-                    "orders": [
-                        {"unit_name": "1st Line", "destination": [8, 5]},
-                        {"unit_name": "2nd Line", "destination": [9, 4]},
-                        ...
-                    ]
-                }
-        
-        Returns:
-            Dictionary with results for each unit:
-                {
-                    "results": [
-                        {"unit_name": "1st Line", "moved": True, "final_position": [7, 5], "distance_to_goal": 1},
-                        ...
-                    ]
-                }
-        """
-        
-        def find_unit_by_name(name: str) -> Optional[Unit]:
-            """Find a unit on the map by name."""
-            for row in self.grid:
-                for hex in row:
-                    if hex.unit and hex.unit.name == name:
-                        return hex.unit
-            return None
-        
-        results = []
-        
-        # Process orders sequentially
-        for order in movement_orders.get("orders", []):
-            unit_name = order.get("unit_name")
-            dest = order.get("destination")
-            
-            if not unit_name or not dest or len(dest) != 2:
-                results.append({
-                    "unit_name": unit_name,
-                    "moved": False,
-                    "error": "Invalid order format"
-                })
-                continue
-            
-            dest_x, dest_y = dest
-            unit = find_unit_by_name(unit_name)
-            
-            if not unit:
-                results.append({
-                    "unit_name": unit_name,
-                    "moved": False,
-                    "error": "Unit not found on map"
-                })
-                continue
-            
-            # Get all reachable hexes for this unit
-            reachable = self.find_reachable_hexes(unit)
-            
-            if not reachable:
-                results.append({
-                    "unit_name": unit_name,
-                    "moved": False,
-                    "final_position": [unit.x, unit.y],
-                    "distance_to_goal": pathfinding.hex_distance(unit.x, unit.y, dest_x, dest_y),
-                    "error": "No reachable hexes"
-                })
-                continue
-            
-            # If destination is directly reachable, move there
-            if (dest_x, dest_y) in reachable:
-                success = self.move_unit(unit, dest_x, dest_y)
-                results.append({
-                    "unit_name": unit_name,
-                    "moved": success,
-                    "final_position": [unit.x, unit.y],
-                    "distance_to_goal": 0 if success else pathfinding.hex_distance(unit.x, unit.y, dest_x, dest_y)
-                })
-            else:
-                # Find the reachable hex closest to the destination
-                best_hex = None
-                best_distance = float('inf')
-                
-                for (rx, ry) in reachable:
-                    if (rx, ry) == (unit.x, unit.y):
-                        continue  # Skip current position
-                    dist = pathfinding.hex_distance(rx, ry, dest_x, dest_y)
-                    if dist < best_distance:
-                        best_distance = dist
-                        best_hex = (rx, ry)
-                
-                if best_hex:
-                    success = self.move_unit(unit, best_hex[0], best_hex[1])
-                    results.append({
-                        "unit_name": unit_name,
-                        "moved": success,
-                        "final_position": [unit.x, unit.y],
-                        "distance_to_goal": pathfinding.hex_distance(unit.x, unit.y, dest_x, dest_y)
-                    })
-                else:
-                    # No better position available, stay put
-                    results.append({
-                        "unit_name": unit_name,
-                        "moved": False,
-                        "final_position": [unit.x, unit.y],
-                        "distance_to_goal": pathfinding.hex_distance(unit.x, unit.y, dest_x, dest_y),
-                        "error": "No closer position available"
-                    })
-        
-        return {"results": results}
-        return {"results": results}
 
     # --- Staff Officer movement helpers and actions ---
     def _hex_distance(self, x1: int, y1: int, x2: int, y2: int) -> int:
@@ -589,33 +441,6 @@ class Map:
         
         # Normalize to 0-360
         return angle_deg % 360
-        units_on = []
-        for x, y in coords:
-            unit = self.grid[y][x].unit
-            if unit:
-                units_on.append(f"{unit.name} ({unit.faction}) at ({x},{y})")
-
-        # Units near the feature (adjacent to any feature hex, but not on it)
-        units_near = set()
-        for x, y in coords:
-            for nx, ny in self.get_neighbors(x, y):
-                if (nx, ny) not in coords and 0 <= nx < self.width and 0 <= ny < self.height:
-                    nunit = self.grid[ny][nx].unit
-                    if nunit:
-                        units_near.add(f"{nunit.name} ({nunit.faction}) at ({nx},{ny})")
-
-        desc = f"Feature '{feature_name}':\n"
-        desc += f"  Terrain type: {terrain_type}\n"
-        desc += f"  Hexes: {coords}\n"
-        if units_on:
-            desc += f"  Units present: {', '.join(units_on)}\n"
-        else:
-            desc += "  Units present: None\n"
-        if units_near:
-            desc += f"  Units nearby: {', '.join(units_near)}\n"
-        else:
-            desc += "  Units nearby: None\n"
-        return desc
     
     def get_weighted_front_arc_advantage(self, x: int, y: int, angle_degrees: int, arc_width_degrees: float = 180.0) -> float:
         """Calculate weighted combat advantage for all tiles within a front arc."""
@@ -625,6 +450,10 @@ class Map:
         """Find two endpoint coordinates for a frontline across a feature."""
         feature_coords = self.get_feature_coordinates(feature_name)
         return frontline.get_frontline_endpoints(self.grid, self.width, self.height, feature_coords, angle_degrees)
+    
+    def assign_units_to_destinations_optimally(self, unit_names: List[str], destinations: List[Tuple[int, int]]) -> dict:
+        """Assign units to destinations minimizing total movement cost using the Hungarian algorithm."""
+        return frontline.assign_units_to_destinations_optimally(self, unit_names, destinations)
 
     def get_frontline_for_feature(self, feature_name: str, angle_degrees: int) -> List[Tuple[int, int]]:
         """Compute the best frontline for a feature facing a direction."""
