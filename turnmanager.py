@@ -46,10 +46,7 @@ class TurnManager:
         
         # 4. Reset mobility for current faction's units
         for unit in self.all_units():
-            if unit.faction == current_faction:
-                if hasattr(unit, "set_mobility"):
-                    unit.reset_mobility()
-                unit.has_moved = False
+            unit.reset_mobility()
 
     def advance_to_next_faction(self):
         """Move to the next faction's turn."""
