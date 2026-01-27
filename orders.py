@@ -88,7 +88,6 @@ def _execute_attack(map_instance, target: str, units: List[str], faction: str) -
         print(f"  [Attack] Unit '{unit_name}' assigned to attack at {dest}")
         map_instance.march(unit_name, dest)
 
-
 def _execute_defend(map_instance, target: str, units: List[str], faction: str) -> None:
     """Execute a defend order.
     
@@ -101,7 +100,6 @@ def _execute_defend(map_instance, target: str, units: List[str], faction: str) -
     print(f"  [TODO] Implement defend logic for {target}")
     # TODO: Implement defend logic
     pass
-
 
 def _execute_support(map_instance, target: str, units: List[str], faction: str) -> None:
     """Execute a support order.

@@ -168,7 +168,8 @@ def main():
 	# specify model
 	# gen_model = "llama3.1:8b"
 	# gen_model = "llama3.2:3b"
-	gen_model = "llama3-groq-tool-use:8b"
+	# gen_model = "llama3-groq-tool-use:8b"
+	gen_model = "qwen3:8b"
 	# gen_model = "gpt-oss:120b-cloud"
 	# gen_model = "mistral:7b"
 

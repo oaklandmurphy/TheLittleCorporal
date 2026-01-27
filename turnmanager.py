@@ -35,7 +35,7 @@ class TurnManager:
             unit.engagement = 0
         
         # 3. Check for all units engagement status then engaged units deal damage to each other
-        # Pass all factions to check engagements (assuming 2-faction game)
+        # Pass all factions to check engagements
         if len(self.factions) >= 2:
             self.map.check_all_engagements()
         
