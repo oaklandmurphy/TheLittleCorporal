@@ -1,6 +1,6 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from terrain import Terrain
+from map.terrain import Terrain
 import random
 
 class Unit(ABC):
@@ -12,11 +12,14 @@ class Unit(ABC):
 		self.corps = corps
 		self.mobility = mobility  # integer: max distance moved in a turn
 		self.remaining_mobility = mobility
-		self.formation = "column"  # can be "column", "entrenched", "line"
+		self.stance = "neutral"  # can be "aggressive", "neutral", "evasive
 		self.size = size          # 1–12: number of men abstracted
+		self.new_round_size = size
 		self.quality = quality    # 1–5: training & experience
+		self.new_round_quality = quality
 		self.morale = morale      # 0–10: fighting spirit
-		self.engaged = False
+		self.new_round_morale = morale
+		self.engagement = 0	  # number of engagements
 		self.has_moved = False
 		self.x = None
 		self.y = None
@@ -41,7 +44,7 @@ class Unit(ABC):
 	
 	def take_damage(self, dmg: float):
 		"""Simplified damage resolution."""
-		self.morale = max(0, self.morale - int(dmg))
+		self.new_round_size = max(0, self.size - int(dmg))
 		if self.morale == 0:
 			print(f"{self.name} ({self.faction}) loses morale and falls back!")
 
@@ -93,6 +96,26 @@ class Unit(ABC):
 		return (f"{self.name}. ({self.__class__.__name__}) at ({self.x}, {self.y}) — "
 				f"A {label_for(self.size, size_labels)}, {label_for(self.quality, quality_labels)} "
 				f"formation that is {label_for(self.morale, morale_labels)}.")
+	
+	def change_stance(self, new_stance: str):
+		if new_stance in ["aggressive", "neutral", "evasive"]:
+			self.stance = new_stance
+		elif new_stance == 1 or new_stance == "a":
+			self.stance = "aggressive"
+		elif new_stance == 0 or new_stance == "n":
+			self.stance = "neutral"
+		elif new_stance == -1 or new_stance == "e":
+			self.stance = "evasive"
+		else:
+			print(f"Invalid stance: {new_stance}. No changes made.")
+
+	def reset(self):
+		self.remaining_mobility = self.mobility
+		self.has_moved = False
+		self.size = self.new_round_size
+		self.quality = self.new_round_quality
+		self.morale = self.new_round_morale
+
 
 class Infantry(Unit):
 	def set_mobility(self):

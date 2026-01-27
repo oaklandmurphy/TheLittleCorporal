@@ -3,7 +3,7 @@ import random
 
 class Terrain:
     """Represents a terrain type with movement and combat modifiers."""
-    def __init__(self, name: str, move_cost: int, combat_modifier: float = 1.0, elevation: float = 0.0, tree_cover: int = 0):
+    def __init__(self, name: str, move_cost: int, elevation: float = 0.0, tree_cover: int = 0):
         self.name = name
         self.move_cost = move_cost  # integer cost to enter this tile
         
@@ -17,7 +17,7 @@ class Terrain:
     
     def getDefenseModifier(self):
         """Returns the combat modifier for defense calculations."""
-        return max(self.tree_cover + self.urbanization + self.entrenchments, 5)
+        return min(self.urbanization + self.entrenchments + self.tree_cover, 5)
     
     def getOffenseModifier(self, enemy_elevation: int):
         """Returns the combat modifier for offense calculations."""
@@ -31,7 +31,7 @@ def FOREST():
     return Terrain("Forest", move_cost=2, elevation=1, tree_cover=random.randint(1, 3))
 
 RIVER = Terrain("River", move_cost=3, elevation=0, tree_cover=0)
-HILL = Terrain("Hill", move_cost=2, elevation=4, tree_cover=0)
+HILL = Terrain("Hill", move_cost=2, elevation=5, tree_cover=0)
 
 # Thresholds for classifying terrain features
 HILL_ELEVATION_THRESHOLD = 2

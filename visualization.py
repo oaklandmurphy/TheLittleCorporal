@@ -35,7 +35,7 @@ import sys
 # Import your game model classes (adjust imports if you placed them in a package)
 from map import Map        # Map, Hex hexs with .terrain and .unit
 from unit import Unit     # Unit class (or specific subclasses)
-from terrain import FIELDS, FOREST, RIVER, HILL
+from map.terrain import FIELDS, FOREST, RIVER, HILL
 
 # Visual configuration
 WINDOW_W = 1000
@@ -541,7 +541,7 @@ class Visualization:
         for row in range(self.game_map.height):
             for col in range(self.game_map.width):
                 hex = self.game_map.get_hex(col, row)
-                if not hex or not hex.unit or not hex.unit.engaged:
+                if not hex or not hex.unit or not hex.unit.engagement:
                     continue
                 
                 unit = hex.unit
@@ -558,11 +558,10 @@ class Visualization:
                     enemy = neighbor_hex.unit
                     
                     # Check if this is an engaged enemy pair
-                    if enemy.faction != unit.faction and enemy.engaged:
+                    if enemy.faction != unit.faction and enemy.engagement:
                         # Create a sorted tuple to avoid drawing the same pair twice
                         pair = tuple(sorted([(col, row), (nx, ny)]))
                         
                         if pair not in processed_pairs:
                             processed_pairs.add(pair)
                             draw_combat_indicator(col, row, nx, ny)
-

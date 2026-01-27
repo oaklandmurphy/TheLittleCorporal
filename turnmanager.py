@@ -19,12 +19,7 @@ class TurnManager:
 
     def all_units(self):
         """Collect all units currently on the map."""
-        units = []
-        for row in self.map.grid:
-            for hex in row:
-                if hex.unit:
-                    units.append(hex.unit)
-        return units
+        return self.map.get_units()
 
     def process_turn_start(self):
         """Execute turn start sequence: engagement check, reset mobility, apply combat damage."""
@@ -37,26 +32,22 @@ class TurnManager:
         
         # 2. Reset engagement flags from previous turn
         for unit in self.all_units():
-            unit.engaged = False
+            unit.engagement = 0
         
-        # 3. Check for all units engagement status and reset movement
-        self.map.check_all_engagements()
+        # 3. Check for all units engagement status then engaged units deal damage to each other
+        # Pass all factions to check engagements
+        if len(self.factions) >= 2:
+            self.map.check_all_engagements()
         
-        # Reset mobility for current faction's units
+        # 4. Reset mobility and set new stats for current faction's units
         for unit in self.all_units():
-            if unit.faction == current_faction:
-                if hasattr(unit, "set_mobility"):
-                    unit.set_mobility()
-                unit.has_moved = False
-        
-        # 4. Engaged units deal damage to each other
-        self.map.apply_engagement_damage()
+            unit.reset()
 
     def advance_to_next_faction(self):
         """Move to the next faction's turn."""
         self.current_faction_index = (self.current_faction_index + 1) % len(self.factions)
 
-    def run_game_loop(self, vis, generals, staff_officers, clock, max_retries=9, num_threads=4, num_ctx=4096):
+    def run_game_loop(self, vis, generals, clock, max_retries=9, num_threads=4, num_ctx=4096):
         """Main game loop that handles rendering, input, and turn processing."""
         running = True
         
@@ -86,8 +77,8 @@ class TurnManager:
         input_thread_obj = threading.Thread(target=input_thread, daemon=True)
         input_thread_obj.start()
         
-        # LLM processing thread - handles general and staff officer interactions
-        def llm_processing_thread(player_prompt, current_faction, general, map_summary_general, staff_officer, map_summary_so):
+        # LLM processing thread - handles general order generation and execution
+        def llm_processing_thread(player_prompt, current_faction, general, map_summary_general, game_map):
             """Run LLM calls in background thread to keep pygame responsive."""
             try:
                 print(f"\n[{current_faction} General's Turn]")
@@ -99,16 +90,15 @@ class TurnManager:
                 )
                 print(f"\n[{current_faction} General's Orders]:\n{general_response}")
                 
-                # Staff officer executes orders
-                applied = staff_officer.process_orders(
-                    general_response,
-                    faction=current_faction, 
-                    max_retries=max_retries
-                )
+                # Parse the JSON orders
+                orders_data = general.parse_orders_json(general_response)
+                
+                # Execute orders directly on the map
+                game_map.execute_orders(orders_data, current_faction)
                 
                 llm_result_queue.put({
                     "success": True,
-                    "applied": applied,
+                    "applied": True,
                     "current_faction": current_faction
                 })
             except Exception as e:
@@ -168,13 +158,12 @@ class TurnManager:
                 # Get current turn information
                 current_faction = self.get_current_faction()
                 general = generals[current_faction]
-                staff_officer = staff_officers[current_faction]
                 
                 # Start LLM processing in background
                 llm_processing.set()
                 llm_thread = threading.Thread(
                     target=llm_processing_thread,
-                    args=(player_prompt, current_faction, general, map_summary_general, staff_officer, map_summary_general),
+                    args=(player_prompt, current_faction, general, map_summary_general, self.map),
                     daemon=True
                 )
                 llm_thread.start()
@@ -184,36 +173,17 @@ class TurnManager:
                 result = llm_result_queue.get()
                 
                 if result["success"]:
-                    applied = result["applied"]
-                    if applied.get("ok"):
-                        moves = applied.get("applied", [])
-                        if moves:
-                            print("\n[Staff Officer Applied Moves]")
-                            for m in moves:
-                                print(f"  - {m.get('tool')} {m.get('args')} -> {m.get('result')}")
-                        print(f"\n[Turn Complete] {len(moves)} unit(s) received orders.")
-                        
-                        # Advance to next faction's turn
-                        self.advance_to_next_faction()
-                        turn_started = False
-                    else:
-                        # Validation failed
-                        print(f"\n[Staff Officer ERROR] {applied.get('error')}")
-                        validation = applied.get("validation", {})
-                        if validation:
-                            print("[Validation Details]")
-                            if validation.get("missing"):
-                                print(f"  Missing orders: {', '.join(validation['missing'])}")
-                            if validation.get("duplicates"):
-                                print(f"  Duplicate orders: {', '.join(validation['duplicates'])}")
-                        print("[Turn skipped - validation failed]")
-                        
-                        # Still advance turn even on failure
-                        self.advance_to_next_faction()
-                        turn_started = False
+                    print(f"\n[Turn Complete] Orders executed successfully.")
+                    
+                    # Advance to next faction's turn
+                    self.advance_to_next_faction()
+                    turn_started = False
                 else:
-                    print(f"[Error] {result.get('error', 'Unknown error')}")
-                    # Advance turn on error too
+                    # Error occurred during order processing
+                    print(f"\n[Order Processing ERROR] {result.get('error', 'Unknown error')}")
+                    print("[Turn skipped - order processing failed]")
+                    
+                    # Still advance turn even on failure
                     self.advance_to_next_faction()
                     turn_started = False
             
