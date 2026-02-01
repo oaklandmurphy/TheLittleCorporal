@@ -2,7 +2,7 @@
 
 import heapq
 from typing import Tuple, Dict, List, Generator
-from unit import Unit
+from map.unit import Unit
 
 
 def get_neighbors(x: int, y: int) -> Generator[Tuple[int, int], None, None]:
@@ -16,7 +16,7 @@ def get_neighbors(x: int, y: int) -> Generator[Tuple[int, int], None, None]:
         Tuples of (x, y) coordinates for each neighbor
     """
 
-    offsets = direction_offsets(y)
+    offsets = direction_offsets(x)
     for dx, dy in offsets:
         yield x + dx, y + dy
 
@@ -41,18 +41,19 @@ def hex_distance(x1: int, y1: int, x2: int, y2: int) -> int:
     return (abs(q1 - q2) + abs(r1 - r2) + abs(s1 - s2)) // 2
 
 
-def direction_offsets(y: int) -> List[Tuple[int, int]]:
-    """Return the 6 neighbor direction offsets in order.
+def direction_offsets(x: int) -> List[Tuple[int, int]]:
+    """Return the 6 neighbor direction offsets in order for odd-q coordinates.
     
     Args:
-        y: Row coordinate (used to determine even/odd row)
+        x: Column coordinate (used to determine even/odd column)
         
     Returns:
         List of (dx, dy) offset tuples
     """
+    # For odd-q: even columns have neighbors at same row and row-1, odd columns at same row and row+1
     offsets_even = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, -1), (-1, -1)]
     offsets_odd = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (-1, +1)]
-    return offsets_odd if y % 2 else offsets_even
+    return offsets_odd if x % 2 else offsets_even
 
 
 def find_reachable_hexes(unit: Unit, grid, width: int, height: int) -> Dict[Tuple[int, int], int]:
@@ -142,6 +143,39 @@ def best_reachable_toward(unit: Unit, target: Tuple[int, int], grid, width: int,
             continue
         dist = hex_distance(rx, ry, target[0], target[1])
         if dist < best_dist or (dist == best_dist and cost < best_cost):
+            best_cost = cost
+            best_dist = dist
+            best_hex = (rx, ry)
+    return best_hex
+
+def best_reachable_away(unit: Unit, target: Tuple[int, int], grid, width: int, height: int, 
+                          max_cost: int = None) -> Tuple[int, int] | None:
+    """Find the best reachable hex farthest from the target.
+    
+    Args:
+        unit: The unit that is moving
+        target: Target (x, y) coordinates
+        grid: The 2D grid of Hex objects
+        width: Width of the map
+        height: Height of the map
+        max_cost: Optional maximum movement cost to consider
+        
+    Returns:
+        (x, y) coordinates of the best reachable hex, or None if no valid hex found
+    """
+    reachable = find_reachable_hexes(unit, grid, width, height)
+    if max_cost is not None:
+        reachable = {pos: cost for pos, cost in reachable.items() if cost <= max_cost}
+    if not reachable:
+        return None
+    best_hex = None
+    best_cost = 0
+    best_dist = float("-inf")
+    for (rx, ry), cost in reachable.items():
+        if (rx, ry) == (unit.x, unit.y):
+            continue
+        dist = hex_distance(rx, ry, target[0], target[1])
+        if dist > best_dist or (dist == best_dist and cost < best_cost):
             best_cost = cost
             best_dist = dist
             best_hex = (rx, ry)

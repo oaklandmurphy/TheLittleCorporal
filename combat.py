@@ -1,6 +1,6 @@
 """Combat resolution logic for hexagonal grid warfare."""
 
-from unit import Unit
+from map.unit import Unit
 import map.pathfinding as pathfinding
 
 

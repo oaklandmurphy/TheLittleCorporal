@@ -1,19 +1,4 @@
 {
-	"action_names": [
-		"Attack",
-		"Defend",
-		"Retreat"
-	],
-
-    "action_names_enemy_unit": [
-        "Attack",
-        "Support"
-    ],
-
-	"action_names_friendly_unit": [
-        "Support"
-    ],
-	
 	"marmont_preset": {
 		"name": "General Auguste Marmont",
 		"description": "You are methodical, cautious, and disciplined. You prefer careful planning and order, but can be slow to adapt and lack charisma. You value efficiency and control over boldness."

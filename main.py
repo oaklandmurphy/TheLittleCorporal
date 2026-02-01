@@ -1,6 +1,6 @@
 from map import Map
 from map.terrain import FIELDS, HILL, RIVER, FOREST
-from unit import Infantry
+from map.unit import Infantry
 from turnmanager import TurnManager
 from visualization import Visualization, WINDOW_W, WINDOW_H
 from general import General
@@ -105,18 +105,18 @@ def create_demo_map() -> Map:
 	yellow_corps = "III Corps (Austrian)"
 
 	# Blue forces (French brigadier generals)
-	b1 = Infantry("Brigade Friant", "French", blue_division, blue_corps, mobility=3, size=8, quality=3, morale=7)
-	b2 = Infantry("Brigade Gudin", "French", blue_division, blue_corps, mobility=3, size=7, quality=3, morale=6)
-	b3 = Infantry("Brigade Morand", "French", blue_division, blue_corps, mobility=3, size=5, quality=4, morale=8)
-	b4 = Infantry("Brigade Petit", "French", blue_division, blue_corps, mobility=3, size=4, quality=4, morale=6)
-	b5 = Infantry("Brigade Desvaux", "French", blue_division, blue_corps, mobility=3, size=4, quality=2, morale=5)
+	b1 = Infantry("Brigade Friant", "French", blue_division, blue_corps, mobility=4, size=8, quality=3, morale=7)
+	b2 = Infantry("Brigade Gudin", "French", blue_division, blue_corps, mobility=4, size=7, quality=3, morale=6)
+	b3 = Infantry("Brigade Morand", "French", blue_division, blue_corps, mobility=4, size=5, quality=4, morale=8)
+	b4 = Infantry("Brigade Petit", "French", blue_division, blue_corps, mobility=4, size=4, quality=4, morale=6)
+	b5 = Infantry("Brigade Desvaux", "French", blue_division, blue_corps, mobility=4, size=4, quality=2, morale=5)
 
 	# Yellow forces (Austrian brigadier generals)
-	r1 = Infantry("Brigade Klenau", "Austrian", yellow_division, yellow_corps, mobility=3, size=8, quality=3, morale=7)
-	r2 = Infantry("Brigade Hohenlohe", "Austrian", yellow_division, yellow_corps, mobility=3, size=6, quality=4, morale=8)
-	r3 = Infantry("Brigade Vincent", "Austrian", yellow_division, yellow_corps, mobility=3, size=4, quality=4, morale=6)
-	r4 = Infantry("Brigade Lichtenstein", "Austrian", yellow_division, yellow_corps, mobility=3, size=6, quality=4, morale=7)
-	r5 = Infantry("Brigade Vukassovich", "Austrian", yellow_division, yellow_corps, mobility=3, size=5, quality=3, morale=6)
+	r1 = Infantry("Brigade Klenau", "Austrian", yellow_division, yellow_corps, mobility=4, size=8, quality=3, morale=7)
+	r2 = Infantry("Brigade Hohenlohe", "Austrian", yellow_division, yellow_corps, mobility=4, size=6, quality=4, morale=8)
+	r3 = Infantry("Brigade Vincent", "Austrian", yellow_division, yellow_corps, mobility=4, size=4, quality=4, morale=6)
+	r4 = Infantry("Brigade Lichtenstein", "Austrian", yellow_division, yellow_corps, mobility=4, size=6, quality=4, morale=7)
+	r5 = Infantry("Brigade Vukassovich", "Austrian", yellow_division, yellow_corps, mobility=4, size=5, quality=3, morale=6)
 
 	# Place Blue units (left/center)
 	game_map.place_unit(b1, 3, 3)
@@ -167,9 +167,9 @@ def main():
 
 	# specify model
 	# gen_model = "llama3.1:8b"
-	# gen_model = "llama3.2:3b"
+	gen_model = "llama3.2:3b"
 	# gen_model = "llama3-groq-tool-use:8b"
-	gen_model = "qwen3:8b"
+	# gen_model = "qwen3:8b"
 	# gen_model = "gpt-oss:120b-cloud"
 	# gen_model = "mistral:7b"
 

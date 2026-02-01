@@ -769,11 +769,11 @@ def _assess_tactical_situation(friendly_units: List[UnitPosition],
 # =====================================================
 
 def _get_neighbors(x: int, y: int) -> List[Tuple[int, int]]:
-    """Get hex neighbors using offset coordinates."""
-    if y % 2 == 0:
-        offsets = [(+1, 0), (-1, 0), (0, +1), (0, -1), (-1, +1), (-1, -1)]
-    else:
-        offsets = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (+1, -1)]
+    """Get hex neighbors using offset coordinates (odd-q)."""
+    if x % 2 == 0:  # even column
+        offsets = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, -1), (-1, -1)]
+    else:  # odd column
+        offsets = [(+1, 0), (-1, 0), (0, +1), (0, -1), (+1, +1), (-1, +1)]
     
     return [(x + dx, y + dy) for dx, dy in offsets]
 

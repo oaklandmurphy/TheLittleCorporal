@@ -1,5 +1,5 @@
 from .terrain import Terrain, FIELDS
-from unit import Unit
+from map.unit import Unit
 from .hex import Hex
 
 import math
@@ -115,16 +115,37 @@ class Map:
 
         # Handle stances
         if unit.stance == "aggressive":
-            aggressive_move = self._best_reachable_toward(unit, self._nearest_enemy_pos(unit), max_cost=unit.mobility//2)
-            if aggressive_move:
-                self.teleport_unit(unit, aggressive_move[0], aggressive_move[1], reachable[(target_x, target_y)])
+            nearest_enemy = self._nearest_enemy_pos(unit)
+            if nearest_enemy and self._hex_distance(unit.x, unit.y, nearest_enemy[0], nearest_enemy[1]) < 3:
+                aggressive_move = self._best_reachable_toward(unit, nearest_enemy, max_cost=unit.mobility//2)
+                if aggressive_move:
+                    self.teleport_unit(unit, aggressive_move[0], aggressive_move[1], reachable[(target_x, target_y)])
 
         elif unit.stance == "evasive":
-            x = 1
-            # TODO
+            nearest_enemy = self._nearest_enemy_pos(unit)
+            if nearest_enemy and self._hex_distance(unit.x, unit.y, nearest_enemy[0], nearest_enemy[1]) < 3:
+                evasive_move = self._best_reachable_away(unit, nearest_enemy, max_cost=unit.mobility//2)
+                if evasive_move:
+                    self.teleport_unit(unit, evasive_move[0], evasive_move[1], reachable[(target_x, target_y)])
 
         return True
 
+    def set_unit_stance(self, unit_name: str, stance: str) -> bool:
+        """Set the stance of a unit by name.
+        
+        Args:
+            unit_name: Name of the unit
+            stance: New stance ("normal", "aggressive", "evasive")
+            
+        Returns:
+            True if the stance was set successfully, False otherwise
+        """
+        unit = self._find_unit_by_name(unit_name)
+        if not unit:
+            return False
+        unit.stance = stance
+        return True
+    # --- Combat checks ---
     def check_and_engage_combat(self, unit: Unit):
         """Check if a unit is adjacent to enemy units and engage them in combat."""
         combat.check_and_engage_combat(unit, self.grid, self.width, self.height)

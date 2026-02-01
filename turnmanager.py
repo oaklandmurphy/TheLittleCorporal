@@ -1,5 +1,5 @@
 from map import Map
-from unit import Unit
+from map.unit import Unit
 import pygame
 import sys
 import queue
