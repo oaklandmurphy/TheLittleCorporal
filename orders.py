@@ -40,7 +40,7 @@ def execute_orders(map_instance, orders_data: Dict[str, Any], faction: str) -> N
         action_handlers = {
             "Attack": _execute_attack,
             "Defend": _execute_defend,
-            "Support": _execute_support,
+            # "Support": _execute_support,
             "Retreat": _execute_retreat,
         }
         
@@ -65,6 +65,11 @@ def _execute_attack(map_instance, target: str, units: List[str], faction: str) -
         units: List of unit names to attack with
         faction: The faction executing the attack
     """
+
+    # Set all attacking units to aggressive stance
+    for units_name in units:
+        map_instance.set_unit_stance(units_name, "aggressive")
+
     enemy_approach_angle = map_instance.get_enemy_approach_angle(faction, target)
     print(f"  [Info] Calculated enemy approach angle: {enemy_approach_angle}°")
     
@@ -98,21 +103,45 @@ def _execute_defend(map_instance, target: str, units: List[str], faction: str) -
         faction: The faction executing the defense
     """
     print(f"  [TODO] Implement defend logic for {target}")
-    # TODO: Implement defend logic
-    pass
-
-def _execute_support(map_instance, target: str, units: List[str], faction: str) -> None:
-    """Execute a support order.
+    # Set all defending units to neutral stance
+    for units_name in units:
+        map_instance.set_unit_stance(units_name, "neutral")
     
-    Args:
-        map_instance: The Map instance
-        target: Target feature or unit to support
-        units: List of unit names to provide support
-        faction: The faction executing support
-    """
-    print(f"  [TODO] Implement support logic for {target}")
-    # TODO: Implement support logic
-    pass
+    enemy_approach_angle = map_instance.get_enemy_approach_angle(faction, target)
+    print(f"  [Info] Calculated enemy approach angle: {enemy_approach_angle}°")
+    
+    target_coords = map_instance.get_frontline_for_feature(target, enemy_approach_angle)
+    if not target_coords:
+        print(f"  [Error] Target feature '{target}' not found")
+        return
+    
+    # Get frontline positions for the target
+    destinations = map_instance.distribute_units_along_frontline(target_coords, len(units))
+    
+    if not destinations:
+        print(f"  [Error] Could not determine defend positions for '{target}'")
+        return
+    print(f"  [Info] Assigned defend positions: {destinations}")
+    
+    # Assign units to destinations optimally (minimizing total distance)
+    assignments = map_instance.assign_units_to_destinations_optimally(units, destinations)
+    
+    for unit_name, dest in assignments:
+        print(f"  [Defend] Unit '{unit_name}' assigned to defend at {dest}")
+        map_instance.march(unit_name, dest)
+
+# def _execute_support(map_instance, target: str, units: List[str], faction: str) -> None:
+#     """Execute a support order.
+    
+#     Args:
+#         map_instance: The Map instance
+#         target: Target feature or unit to support
+#         units: List of unit names to provide support
+#         faction: The faction executing support
+#     """
+#     print(f"  [TODO] Implement support logic for {target}")
+#     # TODO: Implement support logic
+#     pass
 
 def _execute_retreat(map_instance, target: str, units: List[str], faction: str) -> None:
     """Execute a retreat order.
@@ -126,6 +155,11 @@ def _execute_retreat(map_instance, target: str, units: List[str], faction: str) 
         units: List of unit names to retreat
         faction: The faction retreating
     """
+
+    # Set all retreating units to evasive stance
+    for units_name in units:
+        map_instance.set_unit_stance(units_name, "evasive")
+
     # Try to interpret target as a feature name first
     target_coords = map_instance.get_feature_coordinates(target)
     
@@ -135,11 +169,6 @@ def _execute_retreat(map_instance, target: str, units: List[str], faction: str) 
         center_y = sum(y for x, y in target_coords) // len(target_coords)
         destination = (center_x, center_y)
         print(f"  [Retreat] Retreating toward feature '{target}' at {destination}")
-    else:
-        # Otherwise assume it's coordinates (would need parsing in real implementation)
-        print(f"  [Retreat] Target '{target}' not found as feature, using as-is")
-        # For now, just pick a reasonable fallback
-        destination = (map_instance.width // 2, map_instance.height // 2)
     
     for unit_name in units:
         print(f"  [Retreat] Unit '{unit_name}' ordered to retreat to {destination}")

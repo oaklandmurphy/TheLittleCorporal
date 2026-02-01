@@ -17,7 +17,7 @@ import pytest
 from map import Map
 from map.terrain import Terrain, FIELDS, HILL, RIVER, FOREST
 from map.hex import Hex
-from unit import Unit, Infantry
+from map.unit import Unit, Infantry
 from typing import List, Tuple
 
 

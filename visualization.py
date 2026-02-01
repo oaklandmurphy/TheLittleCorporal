@@ -1,7 +1,7 @@
 
 import math
 import pygame
-from unit import Unit
+from map.unit import Unit
 from pygame.locals import *
 from OpenGL.GL import (
     glBegin, glEnd, glColor3f, glVertex2f, glClearColor, glClear, glDrawPixels, glWindowPos2d,
@@ -34,7 +34,7 @@ import sys
 
 # Import your game model classes (adjust imports if you placed them in a package)
 from map import Map        # Map, Hex hexs with .terrain and .unit
-from unit import Unit     # Unit class (or specific subclasses)
+from map.unit import Unit     # Unit class (or specific subclasses)
 from map.terrain import FIELDS, FOREST, RIVER, HILL
 
 # Visual configuration
@@ -323,7 +323,7 @@ class Visualization:
             glDisable(GL_BLEND)
 
         # Draw units on top
-        from unit import Infantry
+        from map.unit import Infantry
         for row in range(self.game_map.height):
             for col in range(self.game_map.width):
                 hex = self.game_map.get_hex(col, row)
@@ -457,8 +457,13 @@ class Visualization:
 
         reachable_hexes = None
         if hex.unit:
-            unit_line = hex.unit.status() if hasattr(hex.unit, "status") else str(hex.unit)
-            lines.append(unit_line)
+            # Display all unit information
+            u = hex.unit
+            lines.append(f"Unit: {u.name} ({u.__class__.__name__})")
+            lines.append(f"Faction: {u.faction} | Division: {u.division} | Corps: {u.corps}")
+            lines.append(f"Size: {u.size} | Quality: {u.quality} | Morale: {u.morale}")
+            lines.append(f"Mobility: {u.remaining_mobility}/{u.mobility} | Stance: {u.stance}")
+            lines.append(f"Engagements: {u.engagement} | Moved: {'Yes' if u.has_moved else 'No'}")
             lines.append(f"Terrain: {terrain_line}")
             # Compute reachable hexes for this unit
             reachable_hexes = set(self.game_map.find_reachable_hexes(hex.unit).keys())

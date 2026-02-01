@@ -1,7 +1,7 @@
 """Hex tile class for the hexagonal grid map."""
 
 from .terrain import Terrain
-from unit import Unit
+from map.unit import Unit
 from typing import Optional
 
 

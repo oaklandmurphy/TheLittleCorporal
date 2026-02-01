@@ -126,6 +126,8 @@ class General:
 
                 TASK: Issue ONE order by calling the appropriate order function (issue_attack_order, issue_defend_order, issue_support_order, or issue_retreat_order).
                 
+                IMPORTANT: When specifying units, provide them as an array of strings, like ["Unit1", "Unit2"], NOT as a JSON string.
+                
                 You must call one of these functions to issue your order. Choose the most appropriate action based on the battlefield situation and commander's instructions.""" 
 
     def _build_user_prompt(self, player_instructions: str) -> str:
@@ -197,32 +199,32 @@ Issue your order now by calling the appropriate function."""
                     }
                 }
             },
-            {
-                "type": "function",
-                "function": {
-                    "name": "issue_support_order",
-                    "description": "Issue a support order to provide assistance to other units or reinforce a position",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "target": {
-                                "type": "string",
-                                "description": f"The unit or position to support. Can be a unit name or terrain feature. Available features: {', '.join(available_features) if available_features else 'None'}",
-                            },
-                            "units": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": f"List of unit names to provide support. Available units: {', '.join(all_unit_names)}",
-                            },
-                            "reasoning": {
-                                "type": "string",
-                                "description": "Brief explanation of what support is needed and why",
-                            }
-                        },
-                        "required": ["target", "units"]
-                    }
-                }
-            },
+            # {
+            #     "type": "function",
+            #     "function": {
+            #         "name": "issue_support_order",
+            #         "description": "Issue a support order to provide assistance to other units or reinforce a position",
+            #         "parameters": {
+            #             "type": "object",
+            #             "properties": {
+            #                 "target": {
+            #                     "type": "string",
+            #                     "description": f"The unit or position to support. Can be a unit name or terrain feature. Available features: {', '.join(available_features) if available_features else 'None'}",
+            #                 },
+            #                 "units": {
+            #                     "type": "array",
+            #                     "items": {"type": "string"},
+            #                     "description": f"List of unit names to provide support. Available units: {', '.join(all_unit_names)}",
+            #                 },
+            #                 "reasoning": {
+            #                     "type": "string",
+            #                     "description": "Brief explanation of what support is needed and why",
+            #                 }
+            #             },
+            #             "required": ["target", "units"]
+            #         }
+            #     }
+            # },
             {
                 "type": "function",
                 "function": {
@@ -277,13 +279,22 @@ Issue your order now by calling the appropriate function."""
             action_type_map = {
                 "issue_attack_order": "Attack",
                 "issue_defend_order": "Defend",
-                "issue_support_order": "Support",
+                # "issue_support_order": "Support",
                 "issue_retreat_order": "Retreat"
             }
             
             action_type = action_type_map.get(function_name, "Attack")
             target = arguments.get("target", "Unknown")
             units = arguments.get("units", [])
+            
+            # Handle case where units might be a JSON string instead of a list
+            if isinstance(units, str):
+                try:
+                    units = json.loads(units)
+                except (json.JSONDecodeError, TypeError):
+                    # If parsing fails, treat as a single unit name
+                    units = [units] if units else []
+            
             reasoning = arguments.get("reasoning", "")
             
             # Build order name
